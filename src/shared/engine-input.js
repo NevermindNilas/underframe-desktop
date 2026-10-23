@@ -26,8 +26,9 @@ export function buildAppState(data, weapon) {
  * @param {number} p.maxTime       simulated seconds
  * @param {number|null} p.appStateRef  id from cache_app_state, or null to inline appState
  * @param {object} [p.appState]    required when appStateRef is null
+ * @param {object|null} [p.reload] the weapon's reload_data row; without one the engine fires without reloading
  */
-export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, debugLog = true }) {
+export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true }) {
   const input = {
     weaponStats,
     enemyConfig: {
@@ -38,14 +39,16 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       overguard: enemy.overguard,
       headshotMultiplier: enemy.headshotMultiplier ?? 2,
       isHeadshot: Boolean(enemy.headshot),
-      headshotAccuracy: enemy.headshot ? 100 : 0,
+      // A fraction (0..1), as underframe.site sends it.
+      headshotAccuracy: enemy.headshot ? 1 : 0,
       headCritEnabled: false,
       headCritMultiplier: 2,
       damageResistanceMultiplier: 1,
       attenuationEnabled: false,
       attenuationMdpt: 0,
       attenuationMdps: 0,
-      attenuationStatusCap: 0,
+      // -1 means "no cap". 0 is a cap of zero status effects, which silently disables every proc and DoT.
+      attenuationStatusCap: -1,
     },
     build: {
       itemName: weapon.name,
@@ -57,7 +60,9 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       maxTime,
       selectedModeName: modeName,
       selectedStanceCombo: '',
-      useAccurateAmmo: false,
+      // Simulate magazines and reloads (underframe.site's default); off fires forever without reloading.
+      // Weapons with no reload row would otherwise get a placeholder 1-round magazine and reload after every shot.
+      useAccurateAmmo: Boolean(reload),
       initialCombo: 0,
       armorStripPerHit: 0,
       generateDebugLog: debugLog,

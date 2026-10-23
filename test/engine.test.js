@@ -20,13 +20,13 @@ async function setup() {
   return { engine, data, index: indexMods(data) };
 }
 
-function simulate({ engine, data, index }, weaponName, modSlots, { appStateRef = null, seed = 7 } = {}) {
+function simulate({ engine, data, index }, weaponName, modSlots, { appStateRef = null, seed = 7, baseHp = 1000 } = {}) {
   const weapon = data.weapons.find(w => w.name === weaponName);
-  const reload = data.reload_data.find(r => r.name === weapon.name);
-  const enemy = { ...scaleEnemy({ base_hp: 1000, base_armor: 0, base_level: 1, faction: 'Corpus' }, { level: 1 }) };
+  const reload = data.reload_data.find(r => r.name === weapon.name) ?? null;
+  const enemy = { ...scaleEnemy({ base_hp: baseHp, base_armor: 0, base_level: 1, faction: 'Corpus' }, { level: 1 }) };
   const { modes } = computeWeaponStats(weapon, modSlots, { modsByName: index.byName, reload, targetFaction: enemy.faction });
   const input = buildEngineInput({
-    weapon, modSlots, weaponStats: modes, enemy, modeName: selectableModes(weapon)[0].mode_name, maxTime: 20,
+    weapon, modSlots, weaponStats: modes, enemy, modeName: selectableModes(weapon)[0].mode_name, maxTime: 20, reload,
     appStateRef, appState: appStateRef == null ? buildAppState(data, weapon) : undefined,
   });
   engine.seed_rng(seed);
@@ -55,6 +55,28 @@ test('mods raise DPS and seeds make runs reproducible', { skip }, async () => {
   const modded = simulate(ctx, 'Braton Prime', build);
   assert.ok(modded.avgDps > base.avgDps * 3, `${modded.avgDps} vs ${base.avgDps}`);
   assert.deepEqual(simulate(ctx, 'Braton Prime', build, { seed: 3 }), simulate(ctx, 'Braton Prime', build, { seed: 3 }));
+});
+
+test('status effects proc and tick, and magazines reload', { skip }, async () => {
+  const ctx = await setup();
+  // attenuationStatusCap 0 would silently disable every proc; useAccurateAmmo false would never reload.
+  const r = simulate(ctx, 'Braton Prime', [{ name: 'Serration', rank: 10 }, { name: 'Infected Clip', rank: 5 }], { baseHp: 1e6 });
+  assert.equal(r.error, undefined);
+  const types = new Set(r.debugLog.map(e => e.type));
+  assert.ok(types.has('Toxin Tick'), `no toxin ticks in ${[...types]}`);
+  assert.ok(types.has('Reloading'), `no reloads in ${[...types]}`);
+  assert.ok(r.avgDotPerShot > 0);
+});
+
+test('weapons without reload data never reload, so their DPS is not cut', { skip }, async () => {
+  const ctx = await setup();
+  for (const name of ['Fulmin', 'Lizzie']) {
+    assert.equal(ctx.data.reload_data.some(r => r.name === name), false, `${name} gained a reload row; pick another weapon`);
+    const r = simulate(ctx, name, [], { baseHp: 1e8 });
+    assert.equal(r.error, undefined);
+    const reloads = r.debugLog.filter(e => e.type === 'Reloading').length;
+    assert.equal(reloads, 0, `${name} reloaded ${reloads} times`);
+  }
 });
 
 test('cached app state gives the same result as inline app state', { skip }, async () => {
