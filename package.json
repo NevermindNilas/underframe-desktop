@@ -1,0 +1,35 @@
+{
+  "name": "underframe-desktop",
+  "productName": "Underframe Desktop",
+  "version": "0.1.0",
+  "description": "Desktop build planner and damage simulator for Warframe, powered by the Underframe engine.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\"",
+    "dist": "electron-builder --win",
+    "update-core": "node core/scripts/update.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.9.3",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "dev.underframe.desktop",
+    "productName": "Underframe Desktop",
+    "directories": { "output": "dist" },
+    "files": [
+      "package.json",
+      "src/**/*",
+      "core/engine/**/*",
+      "core/data/**/*",
+      "core/manifest.json",
+      "LICENSE",
+      "NOTICE.md"
+    ],
+    "win": { "target": ["nsis", "portable"] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
