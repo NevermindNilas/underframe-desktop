@@ -20,7 +20,7 @@ import { isKitgun } from '../../shared/mods.js';
 import { previewSlots } from '../dnd.js';
 import { buildCapacity } from '../model.js';
 import { chooseFile } from '../ocr-import.js';
-import { ArcaneSlot, ModSlot, SlotCaption } from './SlotCard.jsx';
+import { ArcaneCaption, ArcaneSlot, ModSlot, SlotCaption } from './SlotCard.jsx';
 import { polarityName } from './art.jsx';
 
 const useStyles = makeStyles({
@@ -417,12 +417,12 @@ export function Stage({ layout }) {
             <ModSlot slot={EXILUS_SLOT} width={size.width} height={size.height} caption="Exilus" tabbable={current === EXILUS_SLOT} />
           </div>
           <div className={styles.cell} style={cellStyle}>
-            <SlotCaption info={arcaneInfo} about="Arcane">Arcane</SlotCaption>
+            <ArcaneCaption info={arcaneInfo} />
             <ArcaneSlot width={size.width} height={size.height} tabbable={current === ARCANE_SLOT} />
           </div>
           {twoArcanes ? (
             <div className={styles.cell} style={cellStyle}>
-              <SlotCaption info={kitgunArcaneInfo} about="kitgun arcane">Kitgun arcane</SlotCaption>
+              <ArcaneCaption info={kitgunArcaneInfo} index={1} />
               <ArcaneSlot index={1} width={size.width} height={size.height} tabbable={current === KITGUN_ARCANE_SLOT} />
             </div>
           ) : null}

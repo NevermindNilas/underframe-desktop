@@ -27,6 +27,13 @@ const RARITY_OF_FRAME = { Bronze: 'common', Silver: 'uncommon', Gold: 'rare', Le
 const BUSY_TIP = 'A best-mod search is running for this slot';
 const MATCH_TEXT = { match: 'matches polarity', mismatch: "doesn't match polarity", neutral: null };
 
+// The arch of an arcane: a half-ellipse over a flat base, in the proportions of the arcane art (464x340).
+const DOME_RADIUS = '50% 50% 6px 6px / 100% 100% 6px 6px';
+const ARCANE_ASPECT = 464 / 340;
+// Room under the dome; the rank pill also overlaps the art's flat base by a few pixels, so a filled dome is as big
+// as an empty one.
+const PILL_ROOM = 12;
+
 const useStyles = makeStyles({
   root: {
     position: 'relative',
@@ -244,15 +251,71 @@ const useStyles = makeStyles({
   // so it doesn't read as the equipped mod's own drain.
   plateProjected: { borderStyle: 'dotted', opacity: 1 },
   faceDimmed: { opacity: 0.55 },
-  // Arcane slot: the whole arcane art (contain) on the left, its name and the uptime badge to the right of it, so
-  // nothing is drawn over the art; the rank strip runs along the bottom.
-  arcaneArt: { position: 'absolute', left: '6px', top: '6px' },
-  arcaneName: {
-    position: 'absolute', top: '6px', right: '6px', textAlign: 'left', color: tokens.colorNeutralForeground1, lineHeight: '16px',
-    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+  // Arcane slot: shaped like an arcane. A dome (the arcane art's arch, flat base) centred in the cell, with the rank
+  // pill under it. Focus, selection and drag rings follow the dome; the name is in the caption above (ArcaneCaption).
+  dome: {
+    position: 'absolute',
+    top: 0,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    boxSizing: 'border-box',
+    borderRadius: DOME_RADIUS,
   },
-  stacks: { position: 'absolute', left: '6px', top: '6px', maxWidth: 'calc(100% - 12px)' },
-  stacksBeside: { top: 'auto', bottom: '28px', right: '6px' },
+  domeButton: {
+    padding: 0,
+    border: 'none',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    outlineStyle: 'none',
+    ':focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`, outlineOffset: '2px' },
+  },
+  domeEmpty: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '2px',
+    paddingBottom: '8px',
+    border: `${tokens.strokeWidthThin} dashed ${tokens.colorNeutralStroke1}`,
+    color: tokens.colorNeutralForeground3,
+    ':hover': { backgroundColor: tokens.colorSubtleBackgroundHover, borderColor: tokens.colorNeutralStroke1Hover },
+    ':disabled': { cursor: 'default', color: tokens.colorNeutralForegroundDisabled, backgroundColor: 'transparent' },
+    '@media (forced-colors: active)': { borderColor: 'CanvasText' },
+  },
+  domeText: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    padding: '0 12px 6px',
+    textAlign: 'center',
+    border: `${tokens.strokeWidthThick} solid`,
+    backgroundColor: tokens.colorNeutralBackground3,
+    color: tokens.colorNeutralForeground1,
+    overflow: 'hidden',
+    pointerEvents: 'none',
+  },
+  domeScrim: { backgroundColor: tokens.colorBackgroundOverlay, pointerEvents: 'none' },
+  pill: {
+    position: 'absolute',
+    bottom: 0,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    height: '22px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '0 8px',
+    borderRadius: '11px',
+    backgroundColor: OVERLAY.strip,
+    color: OVERLAY.neutral,
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+    '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', border: '1px solid CanvasText' },
+  },
+  pillActive: { height: '26px', borderRadius: '13px', padding: '0 2px', gap: '2px', pointerEvents: 'auto' },
+  arcaneCaption: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  stacks: { position: 'absolute', right: 0, top: 0, maxWidth: '45%' },
   stacksButton: {
     border: 'none', padding: 0, background: 'none', cursor: 'pointer', borderRadius: tokens.borderRadiusMedium, minHeight: '24px',
     display: 'inline-flex', alignItems: 'center', maxWidth: '100%',
@@ -685,8 +748,28 @@ export function SlotCaption({ children, info, about = null }) {
   );
 }
 
-/** An arcane slot (docs/arsenal-spec.md 4.6): `index` 0, or 1 for a kitgun's Pax / Residual slot. */
-export function ArcaneSlot({ width, height, caption = null, tabbable = true, index = 0 }) {
+/** "Primary Merciless" -> "Merciless": the caption and the weapon already say which kind of arcane it is. */
+const shortArcaneName = name => name.replace(/^(Primary|Secondary) (?=\S)/, '');
+
+/** Caption above an arcane slot: "Arcane", plus the equipped arcane's name, since the dome itself carries no text. */
+export function ArcaneCaption({ info, index = 0 }) {
+  const styles = useStyles();
+  const name = useApp(s => s.build.arcanes?.[index]?.name ?? null);
+  const label = index === 1 ? 'Kitgun arcane' : 'Arcane';
+  return (
+    <span className={styles.caption} title={name ?? undefined}>
+      <InfoLabel size="small" info={info} infoButton={{ 'aria-label': `About the ${label.toLowerCase()} slot` }}>
+        <Caption1 className={styles.arcaneCaption}>{name ? `${label} · ${shortArcaneName(name)}` : label}</Caption1>
+      </InfoLabel>
+    </span>
+  );
+}
+
+/**
+ * An arcane slot (docs/arsenal-spec.md 4.6), shaped like an arcane: a dome in the art's proportions with the rank pill
+ * under it. `index` 0, or 1 for a kitgun's Pax / Residual slot.
+ */
+export function ArcaneSlot({ width, height, tabbable = true, index = 0 }) {
   const styles = useStyles();
   const ctx = useApp(s => s.ctx);
   const build = useApp(s => s.build);
@@ -707,7 +790,6 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
   const info = active ? dropInfo(ctx, build, active, slotId, null) : null;
   const over = drop.over || (pickup && pickup.at === slotId);
   const any = weapon ? arcanesFor(weapon, ctx.data, index).length > 0 : false;
-  const rootClass = mergeClasses(styles.root, selected && styles.selected, dragClass(styles, info, over));
   const rootHandlers = {
     ...drop.props,
     onMouseEnter: () => setHover(true),
@@ -715,9 +797,14 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
     onFocus: () => { setFocusWithin(true); if (store.get().pickup) actions.movePickup(slotId); },
     onBlur: e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocusWithin(false); },
   };
+  const domeH = Math.max(24, height - PILL_ROOM);
+  const domeW = Math.min(width, Math.round(domeH * ARCANE_ASPECT));
+  const domeSize = { width: domeW, height: domeH };
+  // Selection and drag feedback ring the dome, not the cell.
+  const ring = mergeClasses(styles.dome, selected && styles.selected, dragClass(styles, info, over));
   const dropHint = info && (over || !info.accept) && (info.label || info.reason) ? (
     <>
-      {info.accept ? null : <span className={styles.refusedScrim} aria-hidden="true" />}
+      {info.accept ? null : <span className={mergeClasses(styles.dome, styles.domeScrim)} style={domeSize} aria-hidden="true" />}
       <span className={styles.dropHint}>
         {info.accept ? null : <ProhibitedRegular aria-hidden="true" />}
         <Caption1>{info.accept ? info.label : info.reason}</Caption1>
@@ -725,38 +812,34 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
     </>
   ) : null;
 
-  if (!any) {
-
-    return (
-      <div className={styles.root} style={{ width, height }} data-testid={`slot-${slotKey}`} data-slot={slotKey}>
-        <Tooltip content={`No arcanes for ${weapon?.subtype ?? 'this weapon'}s in the data`} relationship="description">
-          <Button appearance="subtle" className={styles.empty} disabledFocusable data-focus-id={focusId} data-slot-button="" tabIndex={tabbable ? 0 : -1} aria-label={`${slotName}, unavailable`}>
-            <DiamondRegular aria-hidden="true" />
-            <Caption1 className={styles.emptyCaption}>No arcanes</Caption1>
-          </Button>
-        </Tooltip>
-      </div>
+  if (!any || !value) {
+    const unavailable = !any;
+    const button = (
+      <button
+        type="button"
+        className={mergeClasses(styles.dome, styles.domeButton, styles.domeEmpty)}
+        style={domeSize}
+        data-focus-id={focusId}
+        data-testid={unavailable ? undefined : `slot-${slotKey}-select`}
+        data-slot-button="" tabIndex={tabbable ? 0 : -1}
+        aria-disabled={unavailable || undefined}
+        aria-label={unavailable ? `${slotName}, unavailable`
+          : `${slotName}${index === 1 ? ' (Pax and Residual arcanes)' : ''}, empty${selected ? ', selected' : ''}`}
+        aria-pressed={unavailable ? undefined : selected}
+        onClick={unavailable ? undefined : () => (store.get().pickup ? actions.dropPickup(slotId) : actions.toggleSlot(slotId))}
+        onKeyDown={unavailable ? undefined : e => { onSlotKeys(e, { slot: slotId, value: null, max: 0, selected, kind: 'arcane' }); }}
+      >
+        <DiamondRegular aria-hidden="true" style={{ fontSize: 20 }} />
+        <Caption1 className={styles.emptyCaption}>{unavailable ? 'No arcanes' : index === 1 ? 'Kitgun arcane' : 'Arcane'}</Caption1>
+      </button>
     );
-  }
-
-  if (!value) {
     return (
-      <div className={rootClass} style={{ width, height }} data-testid={`slot-${slotKey}`} data-slot={slotKey} {...rootHandlers}>
-        <Button
-          appearance="subtle"
-          className={styles.empty}
-          data-focus-id={focusId}
-          data-testid={`slot-${slotKey}-select`}
-          data-slot-button="" tabIndex={tabbable ? 0 : -1}
-          aria-label={`${slotName}${index === 1 ? ' (Pax and Residual arcanes)' : ''}, empty${selected ? ', selected' : ''}`}
-          aria-pressed={selected}
-          onClick={() => (store.get().pickup ? actions.dropPickup(slotId) : actions.toggleSlot(slotId))}
-          onKeyDown={e => { onSlotKeys(e, { slot: slotId, value: null, max: 0, selected, kind: 'arcane' }); }}
-        >
-          <DiamondRegular aria-hidden="true" style={{ fontSize: 22 }} />
-          <Caption1 className={styles.emptyCaption}>{caption ?? (index === 1 ? 'Kitgun arcane' : 'Arcane')}</Caption1>
-        </Button>
-        {dropHint}
+      <div className={styles.root} style={{ width, height }} data-testid={`slot-${slotKey}`} data-slot={slotKey} {...(unavailable ? {} : rootHandlers)}>
+        <span className={ring} style={domeSize} aria-hidden="true" />
+        {unavailable ? (
+          <Tooltip content={`No arcanes for ${weapon?.subtype ?? 'this weapon'}s in the data`} relationship="description">{button}</Tooltip>
+        ) : button}
+        {unavailable ? null : dropHint}
       </div>
     );
   }
@@ -772,13 +855,10 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
   const assumes = controls.stacks ? (controls.stacks.max === 1 ? stacksText : `Assumes ${stacksText}`) : null;
   const accName = `${slotName}: ${value.name}, rank ${value.rank} of ${max}${assumes ? `, ${assumes.charAt(0).toLowerCase()}${assumes.slice(1)}${controls.cap && controls.trigger ? ` (${controls.trigger.toLowerCase()})` : ''}` : ''}`;
   const descId = `slot-desc-${slotKey}`;
-  // The art keeps its proportions (the arcane images are about 4:3) in the space above the rank strip.
-  const artH = Math.max(24, height - 34);
-  const artW = Math.round(artH * (464 / 340));
 
   return (
     <div
-      className={rootClass}
+      className={styles.root}
       style={{ width, height }}
       data-testid={`slot-${slotKey}`}
       data-slot={slotKey}
@@ -787,39 +867,34 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
       onDragEnd={() => actions.setDrag(null)}
       {...rootHandlers}
     >
-      <span className={styles.face} aria-hidden="true">
+      <span className={ring} style={domeSize} aria-hidden="true">
         {imageUrl ? (
-          <>
-            <span className={styles.arcaneArt} style={{ width: artW, height: artH }}><ArtImage src={imageUrl} fit="contain" /></span>
-            {/* One line on short slots: every weapon arcane starts "Primary"/"Secondary", so that word goes (the slot
-                caption and the weapon say it) and the line shows which arcane it is: "Merciless", not "Primary…". */}
-            <Caption1Strong className={styles.arcaneName} style={{ left: artW + 12, WebkitLineClamp: height >= 84 ? 2 : 1 }} title={value.name}>
-              {height >= 84 ? value.name : value.name.replace(/^(Primary|Secondary) (?=\S)/, '')}
-            </Caption1Strong>
-          </>
+          <ArtImage src={imageUrl} fit="contain" />
         ) : (
-          <span className={styles.textCard}>
-            <Body1Strong className={styles.textName}>{value.name}</Body1Strong>
+          <span className={mergeClasses(styles.dome, styles.domeText)} style={{ ...domeSize, borderColor: RARITY_TOKEN.legendary }}>
+            <Caption1Strong>{shortArcaneName(value.name)}</Caption1Strong>
           </span>
         )}
       </span>
-      <button
-        type="button"
-        className={styles.primary}
-        data-focus-id={focusId}
-        data-testid={`slot-${slotKey}-select`}
-        data-slot-button="" tabIndex={tabbable ? 0 : -1}
-        aria-label={accName}
-        aria-describedby={descId}
-        aria-pressed={selected}
-        onClick={() => (store.get().pickup ? actions.dropPickup(slotId) : actions.toggleSlot(slotId))}
-        onKeyDown={e => { onSlotKeys(e, { slot: slotId, value, max, selected, kind: 'arcane' }); }}
-      />
+      <Tooltip content={value.name} relationship="inaccessible" positioning="above">
+        <button
+          type="button"
+          className={mergeClasses(styles.dome, styles.domeButton)}
+          style={domeSize}
+          data-focus-id={focusId}
+          data-testid={`slot-${slotKey}-select`}
+          data-slot-button="" tabIndex={tabbable ? 0 : -1}
+          aria-label={accName}
+          aria-describedby={descId}
+          aria-pressed={selected}
+          onClick={() => (store.get().pickup ? actions.dropPickup(slotId) : actions.toggleSlot(slotId))}
+          onKeyDown={e => { onSlotKeys(e, { slot: slotId, value, max, selected, kind: 'arcane' }); }}
+        />
+      </Tooltip>
       <span id={descId} hidden>{`${summary}${selected ? '. Selected' : ''}`}</span>
-      <span className={styles.frame} style={{ boxShadow: `inset 0 0 0 2px ${RARITY_TOKEN.legendary}` }} aria-hidden="true" />
       {controls.stacks || support.level !== 'full' ? (
-        <span className={mergeClasses(styles.stacks, imageUrl && styles.stacksBeside)} style={imageUrl ? { left: artW + 12 } : undefined}>
-          <Popover withArrow positioning="below-start">
+        <span className={styles.stacks}>
+          <Popover withArrow positioning="below-end">
             <PopoverTrigger disableButtonEnhancement>
               <button
                 type="button"
@@ -829,7 +904,7 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
               >
                 {controls.stacks ? (
                   <Badge appearance="filled" color="informative" size="small" style={{ maxWidth: '100%' }} title={assumes}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{imageUrl ? stacksText : assumes}</span>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stacksText}</span>
                   </Badge>
                 ) : (
                   <Badge appearance="filled" color={support.level === 'none' ? 'informative' : 'warning'} size="small" icon={support.level === 'none' ? <InfoRegular /> : <WarningRegular />} />
@@ -859,9 +934,9 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
           </Popover>
         </span>
       ) : null}
-      <div className={mergeClasses(styles.strip, showActions && styles.stripActive)}>
+      <div className={mergeClasses(styles.pill, showActions && styles.pillActive)}>
         {showActions ? (
-          <span className={styles.actionGroup}>
+          <>
             <Tooltip content="Lower rank (−)" relationship="label">
               <Button appearance="transparent" className={styles.action} icon={<SubtractRegular />} tabIndex={-1} data-testid={`slot-rank-dec-${slotKey}`} disabled={value.rank <= 0} onClick={() => actions.setArcaneRank(index, value.rank - 1)} />
             </Tooltip>
@@ -869,23 +944,18 @@ export function ArcaneSlot({ width, height, caption = null, tabbable = true, ind
             <Tooltip content="Raise rank (+)" relationship="label">
               <Button appearance="transparent" className={styles.action} icon={<AddRegular />} tabIndex={-1} data-testid={`slot-rank-inc-${slotKey}`} disabled={value.rank >= max} onClick={() => actions.setArcaneRank(index, value.rank + 1)} />
             </Tooltip>
-          </span>
-        ) : (
-          <span className={styles.center}>
-            <RankPips rank={value.rank} max={max} />
-            <Caption1 className={styles.rankText} aria-hidden="true">{value.rank}/{max}</Caption1>
-          </span>
-        )}
-        {showActions ? (
-          <span className={styles.actionGroup}>
             <Tooltip content="Remove (Del)" relationship="label">
               <Button appearance="transparent" className={styles.action} icon={<DismissRegular />} tabIndex={-1} data-testid={`slot-remove-${slotKey}`} onClick={() => actions.clearArcane(index)} />
             </Tooltip>
-          </span>
-        ) : null}
+          </>
+        ) : (
+          <>
+            <RankPips rank={value.rank} max={max} />
+            <Caption1 className={styles.rankText} aria-hidden="true">{value.rank}/{max}</Caption1>
+          </>
+        )}
       </div>
       {dropHint}
     </div>
   );
 }
-
