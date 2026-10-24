@@ -119,11 +119,12 @@ export function attachSmoke(win, { exit, env = process.env, timeoutMs = SMOKE_TI
   }
 
   /**
-   * The screenshot named by UF_SMOKE_OCR_IMAGE (a local test image, never shipped), so the smoke run can drive real
-   * recognition end to end. Resolves to its bytes, or null when the variable is not set.
+   * The screenshot named by UF_SMOKE_OCR_IMAGE (UF_SMOKE_RIVEN_IMAGE for kind 'riven': two riven cards side by side),
+   * a local test image never shipped, so the smoke run can drive real recognition end to end. Resolves to its bytes,
+   * or null when the variable is not set.
    */
-  async function ocrImage() {
-    const file = env.UF_SMOKE_OCR_IMAGE;
+  async function ocrImage(kind = 'build') {
+    const file = kind === 'riven' ? env.UF_SMOKE_RIVEN_IMAGE : env.UF_SMOKE_OCR_IMAGE;
     if (!file || done) return null;
     return new Uint8Array(await readFile(path.resolve(file)));
   }

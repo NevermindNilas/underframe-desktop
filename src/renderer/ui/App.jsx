@@ -17,6 +17,7 @@ import { CompareDialog } from './CompareDialog.jsx';
 import { BuffsDialog } from './BuffsDialog.jsx';
 import { AutoBuildDialog } from './AutoBuildDialog.jsx';
 import { RivenDialog } from './RivenDialog.jsx';
+import { RivenToolsDialog } from './RivenToolsDialog.jsx';
 import { Announcer } from './Announcer.jsx';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { useShortcuts } from './shortcuts.js';
@@ -112,6 +113,8 @@ function Shell() {
       <CompareDialog />
       <BuffsDialog />
       <AutoBuildDialog />
+      {/* Before the riven dialog, which opens on top of it to edit a compare riven. */}
+      <RivenToolsDialog />
       <RivenDialog />
       <Announcer />
     </div>

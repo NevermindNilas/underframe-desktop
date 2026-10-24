@@ -20,6 +20,7 @@ import { modeLabel } from '../../shared/fire-modes.js';
 import { previewSlots } from '../dnd.js';
 import { ArcaneSlot, ModSlot } from './SlotCard.jsx';
 import { AutoBuildButton } from './AutoBuildDialog.jsx';
+import { RivenToolsButton } from './RivenToolsDialog.jsx';
 import { WeaponOptions } from './WeaponOptions.jsx';
 
 const useStyles = makeStyles({
@@ -283,6 +284,7 @@ export function CapacityMeter({ compact = false }) {
       {!cap.over && !capacity.catalyst ? <Caption1 className={styles.meterLabel} data-testid="catalyst-off">No Catalyst</Caption1> : null}
       {/* Auto build's one quiet entry point (docs/declutter-spec.md 4), next to the build mechanics. */}
       <AutoBuildButton />
+      <RivenToolsButton />
       <CapacityMenu />
     </div>
   );

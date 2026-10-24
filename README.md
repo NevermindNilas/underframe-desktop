@@ -14,7 +14,9 @@ developer's permission.
 - Card gallery with smart search (`cc`, `drain<=6`, `pol:v`, `is:exilus`, "Did you mean"), filters,
   drag and drop and keyboard pick-up; compatibility and conflict checks on every card
 - Weapon arcanes and conditional mods (Galvanized and the like), simulated at the stacks you set
-- Rivens: your own rolls, disposition and rank, kept in a library of your rivens
+- Rivens: your own rolls, disposition and rank, kept in a library of your rivens (import and export), or read
+  from a screenshot; the site's riven tools: Slot my riven, Auto riven (the best roll for the build), Rolls data (CSV)
+  and a compare of two rivens
 - External buffs and target statuses, with presets
 - Weapon options: Progenitor bonuses, exalted weapons' ability strength, weapon passives; combined fire modes
 - Auto build: the underframe.site optimizer, with blacklists, whitelists and Cost Control

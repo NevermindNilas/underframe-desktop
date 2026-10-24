@@ -1,12 +1,15 @@
 // The Auto Build worker (a module worker, bundled by Vite): runs the search off the UI thread. It loads the game data
 // itself, starts its own pool of engine workers (nested workers running engine.worker.js), runs the search and posts
 // progress, then the result. One run per worker: the page starts a fresh one each time and terminates it after.
-//   in:  { type: 'start', build, start, settings, cores }   { type: 'cancel' }
+// The riven tools (riven-tool-job.js) run here too, with `job: 'riven'`.
+//   in:  { type: 'start', build, start, settings, cores }
+//        { type: 'start', job: 'riven', build, tool, options, rivens, settings, cores }   { type: 'cancel' }
 //   out: { type: 'progress', percent, step, detail, runs, elapsedMs }  { type: 'done', result }
 //        { type: 'cancelled' }  { type: 'error', message }
 import { createEngineClient } from './engine-client.js';
 import { createEnginePool, defaultPoolSize } from './auto-build-pool.js';
 import { appStateFor, runAutoBuildJob } from './auto-build-job.js';
+import { runRivenToolJob } from './riven-tool-job.js';
 
 const ENGINE_WORKER_URL = '/renderer/engine.worker.js';
 const PROGRESS_INTERVAL_MS = 120;
@@ -19,7 +22,7 @@ function post(msg) {
   self.postMessage(msg);
 }
 
-async function start({ build, start: startBuild, settings, cores }) {
+async function start({ job, build, start: startBuild, settings, cores, tool, options, rivens }) {
   const t0 = Date.now();
   let lastPost = 0;
   let last = null;
@@ -43,7 +46,9 @@ async function start({ build, start: startBuild, settings, cores }) {
     pool = createEnginePool({ size, appState, createClient: opts => createEngineClient(ENGINE_WORKER_URL, opts) });
     await pool.ready;
     if (signal.aborted) throw Object.assign(new Error('cancelled'), { name: 'AbortError' });
-    const result = await runAutoBuildJob({ ctx, build, start: startBuild, settings, pool, signal, onProgress: progress });
+    const result = job === 'riven'
+      ? await runRivenToolJob({ ctx, build, tool, options, settings, rivens, pool, signal, onProgress: progress })
+      : await runAutoBuildJob({ ctx, build, start: startBuild, settings, pool, signal, onProgress: progress });
     post({ type: 'done', result: { ...result, cores: size, elapsedMs: Date.now() - t0 } });
   } catch (e) {
     if (signal.aborted || e?.name === 'AbortError') post({ type: 'cancelled' });

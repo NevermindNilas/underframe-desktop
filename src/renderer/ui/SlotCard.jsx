@@ -654,7 +654,7 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
           </Button>
         )}
         {info?.accept && info.drain != null ? (
-          <DrainPlate slot={slot} drain={info.drain} effect={info.effect} base={info.drain} polarity={polarity} modPolarity={ctx.index.byName.get(active.name)?.Polarity} projected={active.name} />
+          <DrainPlate slot={slot} drain={info.drain} effect={info.effect} base={info.drain} polarity={polarity} modPolarity={info.modPolarity} projected={active.name} />
         ) : null}
         {(hover || focusWithin) && !(picking && selected) && !here && !active ? (
           <SlotMenu
@@ -742,7 +742,7 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
         effect={shownDrain ? shownDrain.effect : d.effect}
         base={shownDrain ? shownDrain.drain : d.base}
         polarity={polarity}
-        modPolarity={shownDrain ? ctx.index.byName.get(active.name)?.Polarity : mod?.Polarity}
+        modPolarity={shownDrain ? shownDrain.modPolarity : mod?.Polarity}
         projected={shownDrain ? active.name : null}
         compact={height < 70}
       />

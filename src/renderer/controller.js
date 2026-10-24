@@ -20,6 +20,7 @@ import * as AS from '../shared/auto-build-settings.js';
 import { startAutoBuildWorker } from './auto-build-client.js';
 import { fmtInt } from './format.js';
 import { gainText } from './auto-build-format.js';
+import * as RTF from './riven-tools-flow.js';
 
 const PINS_KEY = 'uf.pins';
 const BASELINE_KEY = 'uf.pinBaseline';
@@ -142,6 +143,8 @@ export const store = createStore({
   // the user's riven library (one per user, on disk).
   rivenDialog: null,
   rivenLibrary: { version: 1, rivens: [] },
+  // The riven tools dialog (Slot my riven, Auto riven, Rolls data, the compare): see riven-tools-flow.js.
+  rivenTool: null,
   // Auto build (docs/port-auto-build.md): the dialog, the run ({ status, percent, step, detail, runs, elapsedMs, result,
   // error, startSnapshot, ... } or null) and the user's configs (auto-build-settings.js library; null until loaded).
   autoBuildOpen: false,
@@ -745,6 +748,7 @@ function openWorkingBuild(build, notices = []) {
   if (s.sweep) stopSweep(null);
   // A run belongs to the build it started on (the site cancels too when the selected build changes).
   stopAutoBuild();
+  RTF.stopRivenTool();
   pendingPin = false;
   store.set({
     build,
@@ -1423,6 +1427,19 @@ export const actions = {
 
   // ---- Rivens (docs/port-rivens.md) ----
 
+  // Riven tools (docs/port-rivens.md 13; riven-tools-flow.js).
+  openRivenTool(tool, opts) { return RTF.openRivenTool(tool, opts); },
+  closeRivenTool() { RTF.closeRivenTool(); },
+  startRivenTool(options) { return RTF.startRivenTool(options); },
+  cancelRivenTool() { RTF.cancelRivenTool(); },
+  rivenToolSetup() { RTF.rivenToolSetup(); },
+  applyRivenTool(key) { return RTF.applyRivenTool(key); },
+  saveRollsCsv() { return RTF.saveRollsCsv(); },
+  readRivenScreenshot(opts) { return RTF.readRivenScreenshot(opts); },
+  editCompareRiven(side) { return RTF.editCompareRiven(side); },
+  exportRivenLibrary() { return RTF.exportRivenLibrary(); },
+  importRivenLibrary(opts) { return RTF.importRivenLibrary(opts); },
+
   /**
    * Open the riven dialog for a mod slot: it edits the riven in the slot, else creates one there. Refused (and said)
    * on a weapon that takes no riven, in the Exilus slot, or when another slot holds the build's riven.
@@ -1448,9 +1465,14 @@ export const actions = {
     store.set({ rivenDialog: null });
     const el = rivenOpener;
     rivenOpener = null;
+    // From the compare, focus stays in the riven tools dialog (its Edit button).
+    if (d.purpose?.kind === 'compare') {
+      requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector(`[data-testid="riven-compare-edit-${d.purpose.side}"]`)?.focus()));
+      return;
+    }
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (focusable(el) && !el.closest?.('[role="dialog"], [role="alertdialog"]')) el.focus();
-      else focusLater(slotFocusId(store.get().build, d.slot));
+      else if (d.slot != null) focusLater(slotFocusId(store.get().build, d.slot));
     }));
   },
   /**
@@ -1465,13 +1487,27 @@ export const actions = {
     const check = RV.validateRiven(clean, { data: ctx.data, weapon });
     if (!clean || !check.ok) return { ok: false, errors: check.errors };
     const slot = rivenDialog.slot;
+    const toStore = lib => storeRivenLibrary(lib).catch(e => notify({ intent: 'warning', title: "Couldn't save the riven to your rivens.", body: errorText(e) }));
+    // A riven of the compare goes back into it; the build is untouched.
+    if (rivenDialog.purpose?.kind === 'compare') {
+      RTF.setCompareRiven(rivenDialog.purpose.side, clean);
+      if (toLibrary) toStore(RV.upsertLibraryRiven(rivenLibrary, clean));
+      store.set({ rivenDialog: null });
+      announce(`${rivenDialog.purpose.side ? 'Right' : 'Left'} riven updated. Compare again to see the result.`);
+      return { ok: true };
+    }
+    // No slot to put it in (every slot full): it is kept in the user's rivens only.
+    if (slot == null) {
+      toStore(RV.upsertLibraryRiven(rivenLibrary, clean));
+      store.set({ rivenDialog: null });
+      announce(`${RV.rivenShortName(clean)} saved to your rivens.`);
+      notify({ intent: 'success', title: `Saved ${RV.rivenShortName(clean)} to your rivens.`, body: 'Every slot is full: equip it from the Picker’s Riven menu.' });
+      return { ok: true };
+    }
     const reason = RV.rivenSlotBlockReason(build, weapon, slot);
     if (reason) return { ok: false, errors: [{ field: 'stats', message: `${reason}.` }] };
     updateBuild(b => M.setSlot(b, slot, clean));
-    if (toLibrary || rivenLibrary.rivens.some(r => r.id === clean.id)) {
-      storeRivenLibrary(RV.upsertLibraryRiven(rivenLibrary, clean))
-        .catch(e => notify({ intent: 'warning', title: "Couldn't save the riven to your rivens.", body: errorText(e) }));
-    }
+    if (toLibrary || rivenLibrary.rivens.some(r => r.id === clean.id)) toStore(RV.upsertLibraryRiven(rivenLibrary, clean));
     announce(`${RV.rivenShortName(clean)} ${rivenDialog.riven ? 'saved' : 'equipped'} in ${M.slotLabel(slot).toLowerCase()}. Average DPS updating.`);
     store.set({ rivenDialog: null });
     rivenOpener = null;
@@ -2220,5 +2256,5 @@ export async function boot({ onReady } = {}) {
 }
 
 export const app = { store, actions, derived, simKey, isDirty, uf, errors, timings, notify, injectSimError, announce };
-export { commitBuild as commitBuildForImport, openWorkingBuild as openImportedBuild, noticeFrom, setGallery, setUi };
+export { commitBuild as commitBuildForImport, openWorkingBuild as openImportedBuild, noticeFrom, setGallery, setUi, storeRivenLibrary as storeRivenLibraryFor };
 

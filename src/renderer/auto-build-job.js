@@ -18,22 +18,14 @@ export function appStateFor(data, build) {
 }
 
 /**
- * @param {object} o
- * @param {object} o.ctx createContext(data)
- * @param {object} o.build the working build (weapon, mode, target, buffs, statuses, polarities)
- * @param {{ mods, arcanes }} o.start the starting point (the kept slots of the build)
- * @param {object} o.settings Auto Build settings (normalised here)
- * @param {{ run(tasks): Promise<Array<{ sum, count, errors, error }>> }} o.pool
- * @param {{ aborted: boolean }} [o.signal]
- * @param {(p) => void} [o.onProgress]
- * @param {() => number} [o.now]
+ * The env and the scorer over the pool for a build: `score(jobs)` gives each job's mean metric (the search's), and
+ * `readout(modLists)` each mod list's Average DPS at the build's own simulation settings (the Readout's 8 seeded runs).
+ * `stats()` counts the runs that succeeded and failed, and the first engine error.
  */
-export async function runAutoBuildJob({ ctx, build, start, settings: rawSettings, pool, signal = null, onProgress = () => {}, now = Date.now }) {
-  const started = now();
+export function poolScorer({ ctx, build, settings, pool }) {
   const data = ctx.data;
   const weapon = ctx.weaponByName.get(build.weaponName);
   if (!weapon) throw new Error(`Unknown weapon: ${build.weaponName}`);
-  const settings = normalizeAutoBuildSettings(rawSettings, data);
   const enemy = { ...resolveEnemy(ctx, build.enemy), armorStripImmune: Boolean(ctx.presets?.[build.enemy?.preset]?.armor_strip_immune) };
   const env = createAutoBuildEnv({ data, weapon, reload: ctx.reloadByName.get(weapon.name) ?? null, build, enemy, settings, index: ctx.index });
   let failed = 0;
@@ -50,19 +42,43 @@ export async function runAutoBuildJob({ ctx, build, start, settings: rawSettings
     }
     return meansOf(jobs.length, tasks, results);
   };
-  const score = jobs => runTasks(jobs, j => candidateInput(env, j), env.metric);
+  return {
+    env,
+    score: jobs => runTasks(jobs, j => candidateInput(env, j), env.metric),
+    readout: (modLists, arcanes = build.arcanes ?? []) => runTasks(
+      modLists.map(mods => ({ mods, arcanes, seeds: SIM_SEEDS })),
+      j => candidateInput(env, j, { maxTime: build.simTime, plain: true }),
+      'avgDps',
+    ),
+    stats: () => ({ failed, succeeded, firstError }),
+  };
+}
+
+/**
+ * @param {object} o
+ * @param {object} o.ctx createContext(data)
+ * @param {object} o.build the working build (weapon, mode, target, buffs, statuses, polarities)
+ * @param {{ mods, arcanes }} o.start the starting point (the kept slots of the build)
+ * @param {object} o.settings Auto Build settings (normalised here)
+ * @param {{ run(tasks): Promise<Array<{ sum, count, errors, error }>> }} o.pool
+ * @param {{ aborted: boolean }} [o.signal]
+ * @param {(p) => void} [o.onProgress]
+ * @param {() => number} [o.now]
+ */
+export async function runAutoBuildJob({ ctx, build, start, settings: rawSettings, pool, signal = null, onProgress = () => {}, now = Date.now }) {
+  const started = now();
+  const data = ctx.data;
+  const settings = normalizeAutoBuildSettings(rawSettings, data);
+  const { env, score, readout, stats } = poolScorer({ ctx, build, settings, pool });
   const result = await runAutoBuild(env, {
     start, score, signal, now, onProgress, deadline: started + settings.timeLimitSeconds * 1000,
   });
+  const { failed, succeeded, firstError } = stats();
   if (!succeeded && failed) throw new Error(`The engine rejected every candidate: ${firstError ?? 'no reason given'}`);
   // Before and after at the build's own settings: what the Readout shows.
   onProgress({ percent: 100, step: 'Comparing with the current build', detail: '', runs: result.runs });
-  const original = { mods: build.mods, arcanes: build.arcanes ?? [] };
-  const [before, after] = await runTasks(
-    [original, result].map(c => ({ mods: c.mods, arcanes: c.arcanes, seeds: SIM_SEEDS })),
-    j => candidateInput(env, j, { maxTime: build.simTime, plain: true }),
-    'avgDps',
-  );
+  const [before] = await readout([build.mods]);
+  const [after] = await readout([result.mods], result.arcanes);
   // Cost Control's plan for the result: the slots to re-polarise so it fits (Apply writes them in the same undo step).
   const plan = settings.costControlEnabled && result.changed ? capacityPlan(env, result.mods) : null;
   return {
@@ -80,8 +96,8 @@ export async function runAutoBuildJob({ ctx, build, start, settings: rawSettings
     log: result.log.slice(-40),
     before,
     after,
-    failedRuns: failed,
-    firstError,
+    failedRuns: stats().failed,
+    firstError: stats().firstError,
     ms: now() - started,
     settings,
   };

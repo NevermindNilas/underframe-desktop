@@ -444,3 +444,62 @@ export function libraryRivensFor(library, weapon) {
   const family = rivenFamily(weapon.name);
   return (library?.rivens ?? []).filter(r => r.family === family);
 }
+
+// ---------- library files (import and export) ----------
+
+/** The library as a file: { version: 1, rivens }, which underframe.site's import reads too (its `rivens` array). */
+export const rivenLibraryFileText = library => `${JSON.stringify({ version: LIBRARY_VERSION, rivens: normalizeRivenLibrary(library).rivens }, null, 2)}\n`;
+
+/**
+ * Read a riven library file: ours, underframe.site's export (an object with a `rivens` array, among its other
+ * sections) or a bare array. Rivens are cleaned; one without an id gets one. Throws when there is no rivens list.
+ * @returns {{ rivens: object[], dropped: number }} dropped: entries that aren't usable rivens
+ */
+export function parseRivenLibraryFile(text, { newId = newRivenId } = {}) {
+  let raw;
+  try {
+    raw = JSON.parse(String(text ?? ''));
+  } catch {
+    throw new Error("This file isn't JSON.");
+  }
+  const list = Array.isArray(raw) ? raw : isObj(raw) && Array.isArray(raw.rivens) ? raw.rivens : null;
+  if (!list) throw new Error('This file has no rivens list.');
+  const rivens = [];
+  for (const r of list.slice(0, MAX_LIBRARY)) {
+    const clean = normalizeRiven(r);
+    if (clean) rivens.push(clean.id ? clean : { ...clean, id: newId() });
+  }
+  return { rivens, dropped: list.length - rivens.length };
+}
+
+/**
+ * Put imported rivens into the library. 'override' replaces it (the site's "A"); 'merge' (its "B") adds them after the
+ * library's own, skipping exact copies of a riven already there and giving a new id to a different riven whose id is
+ * taken. At most 500 rivens are kept.
+ * @returns {{ library, added: number, skipped: number }}
+ */
+export function importRivensInto(library, incoming, mode = 'merge', { newId = newRivenId } = {}) {
+  if (mode === 'override') {
+    const next = normalizeRivenLibrary({ rivens: dedupeIds(incoming, newId) });
+    return { library: next, added: next.rivens.length, skipped: incoming.length - next.rivens.length };
+  }
+  const list = normalizeRivenLibrary(library).rivens.slice();
+  let added = 0;
+  let skipped = 0;
+  for (const r of incoming) {
+    if (list.some(x => sameRivenContent(x, r) && x.family === r.family)) { skipped++; continue; }
+    if (list.length >= MAX_LIBRARY) { skipped++; continue; }
+    list.push(list.some(x => x.id === r.id) ? { ...r, id: newId() } : r);
+    added++;
+  }
+  return { library: { version: LIBRARY_VERSION, rivens: list }, added, skipped };
+}
+
+function dedupeIds(list, newId) {
+  const ids = new Set();
+  return list.map(r => {
+    const out = ids.has(r.id) ? { ...r, id: newId() } : r;
+    ids.add(out.id);
+    return out;
+  });
+}

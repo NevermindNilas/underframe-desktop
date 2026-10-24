@@ -45,7 +45,8 @@ export function dropInfo(ctx, build, drag, slot, polarities) {
   const { drain, effect } = slotDrain(mod, rank, polarities?.[slot]);
   if (reason) return { accept: false, reason, drain: null, effect: null, label: '' };
   const label = target && from != null ? `Drop to swap with ${target.name}` : target ? `Drop to replace ${target.name} (drain ${drain})` : `Drop to equip (drain ${drain})`;
-  return { accept: true, reason: null, drain, effect, label };
+  // The dragged item's own polarity for the projected plate (a riven's is Omni).
+  return { accept: true, reason: null, drain, effect, label, modPolarity: mod.Polarity ?? null };
 }
 
 /** The mods after the drop, for the capacity preview (null when the drop would be refused). */

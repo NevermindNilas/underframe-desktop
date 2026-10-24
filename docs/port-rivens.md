@@ -217,6 +217,8 @@ A row's polarity (positive/negative) is the row it was added as; when an existin
 
 ## 9. Site features left for later
 
+All four are ported now: see section 13.
+
 - **OCR import** (L49270-49345, L49881-50560): reads a riven screenshot, matches labels to stat keys with an alias table (L49958-50035), stores `observed / disposition` (it assumes rank 8, L50277-50278), fixes signs by position and by a feasibility check (ratio 0.6-1.4 of the expected mid, or within max(0.05, 20%), L50170-50199), adds the riven to the library and slots it in the first empty slot. This app's screenshot import already recognises riven slots and leaves them empty with "Riven: not supported"; a later step could open the riven editor for such a slot.
 - **Left/right compare** (L49655-49880): two rivens from one image, each reviewed, then every free slot is tried with each and the DPS compared.
 - **Slot My Riven** (L40973-41253): tries each library riven of the family in each non-special slot; asks before changing the elemental combo.
@@ -378,9 +380,108 @@ In `src/renderer/model.js`: `normalizeSlot` (riven branch), `normalizeBuild` (on
 
 ### 12.3 Gaps
 
-- Not done (section 9): screenshot (OCR) import of rivens (the import still leaves a riven slot empty with "Riven: not supported"), left/right compare, Slot My Riven, Auto Riven, and import/export of the library.
+- Closed by section 13: the riven tools, rivens from a screenshot, the left/right compare and the library's files. The Forma planner now polarises a riven's slot (Madurai: an Omni riven halves in any polarity but Umbra), a dragged riven shows its Omni glyph on the projected drain plate, and the Auto build result names a riven "Braton Riven" without " R8".
 - No per-weapon disposition (the site has none either): the player types it.
-- The Forma planner (`capacityPlan`) never re-polarises a riven's slot (an Omni riven matches any polarity, so it rarely matters).
-- Drag of a riven shows no polarity glyph on the projected drain plate, and the Auto build result list prints " R8" after a riven's name.
 - The featured builds in the data have no gun riven, so the featured path is covered by a synthetic build in the tests only.
-- Not run here: the Electron smoke test (11.6's UI smoke is for the lead).
+
+## 13. Riven tools (2026-10-25)
+
+underframe.site's riven tools, ported from its behaviour (script.js read as data, none of it copied): Slot My Riven (L40973), Auto Riven (`slotOptimalRiven`, L42008), Get Rolls Data (`exportRollsData`, L43183), the rolls scan setup (L43004-43180), the minor build tweaks (L41487-41940), the left/right compare (L49393-49880) and the library's import and export (L11640-11745).
+
+### 13.1 Files
+
+- `src/shared/riven-tools.js` (pure):
+  - the site's constants: runs 50 (1-200), 5 s, roll strength 11000 (9000-11000), 2 forced positives, batches of 250, and the tweak limits;
+  - the gun's positive list (`ROLL_POSITIVE_STATS`, in the site's group order, kept to the stats the weapon's rivens have);
+  - the negatives (`rollNegativeStats`: every riven stat but Punch Through, the elements and the spliced stats, sorted);
+  - `positiveCombos` and `theoreticalRiven` (2+1 and 3+1 multipliers 1.2375/-0.495 and 0.9375/-0.75, times the strength; disposition 1.2, rank 8);
+  - the tweak helpers (`tweakPool`, `minorTweakContext`, `promoteForTweaks`, `refineAroundRiven`);
+  - the four searches: `slotMyRiven`, `autoRiven`, `rollsData` (with the site's CSV columns and quoting) and `compareRivens`. Each takes an Auto Build env and an injected `score(jobs)`.
+- `src/renderer/riven-tool-job.js`: one run over the engine pool (`poolScorer`, now shared with Auto Build's job), then each proposal's Average DPS at the build's own settings (the Readout's 8 seeded runs).
+- The Auto Build worker and client take `job: 'riven'` with `tool`, `options` and `rivens`. Runs use the user's Auto Build engine count.
+- `src/renderer/riven-tools-flow.js`: the dialog's state (`store.rivenTool`), Start, Cancel, Apply (one undo step, with Undo in the toast), Save CSV, rivens from a screenshot, the compare's rivens, and the library's import and export.
+- `src/renderer/ui/RivenToolsDialog.jsx`: the "Riven" menu on the Loadout's capacity line (for guns that take rivens) and the dialog (setup, progress, result).
+- `src/shared/riven-recognition.js`: rivens from a screenshot's OCR (13.4).
+- `src/main/files.js`: `uf.files.saveText` and `openText` through the system dialogs. Automated runs save to a temp folder and never open a file.
+- `src/shared/rivens.js`: `rivenLibraryFileText`, `parseRivenLibraryFile` and `importRivensInto`.
+- Tests:
+  - `test/riven-tools.test.js`: a fake scorer with a known best answer, and a real-engine run of each tool;
+  - `test/riven-recognition.test.js`: Windows OCR of riven cards drawn for the test (in `test/fixtures/riven-ocr/`), and hand-made OCR;
+  - library files in `test/rivens.test.js`.
+- Smoke (`checkRivenTools`):
+  - the menu, opened by real clicks;
+  - Auto riven applied, then undone;
+  - Rolls data saved;
+  - with `UF_SMOKE_RIVEN_IMAGE`: two rivens read and compared, and one read into the riven dialog;
+  - library import and export.
+
+### 13.2 As on the site
+
+- **Slot My Riven** tries the library's rivens of the family in every general slot that holds no riven and isn't excluded, filled or empty.
+  - Rivens with an excluded positive are left out. The baseline is 50 runs.
+  - The result gives the best placement, and the best one that keeps the build's elements.
+  - When the best placement changes the elements, the result offers both ("Apply best" and "Apply, keep elements") instead of the site's confirm().
+  - When nothing beats the build: "Your riven is not optimal to slot in this build."
+- **Auto Riven** runs in four phases:
+  - Phase 1 rolls every 2- and 3-positive set into every filled, unprotected general slot, with the default negative (Zoom, else the chosen one). Forced positives are in every set; excluded ones never are.
+  - Phase 2 tries every negative (or the chosen one) on the best roll, at 3x the runs.
+  - With minor tweaks:
+    - phase 1.5 ranks the weak slots and shortlists 8 replacements per slot;
+    - the promoted sets (the 8 best, plus 2 per upgradeable slot) each get phase 2;
+    - the top 5 get up to 3 swaps around the riven, and each swap must gain 0.25%.
+  - Phase 4 confirms the winner at 3x the runs and applies it only when it beats the baseline (20 runs).
+  - Keeping the elements (on by default) drops every candidate that changes them.
+- **Rolls data** needs a negative stat.
+  - It scores every set with that negative in every unprotected general slot, filled or empty, at the chosen runs. The baseline is 24 runs.
+  - With tweaks, the 40 best rows, plus 8 per upgradeable slot, get the swaps.
+  - The CSV is sorted best first and named `<build>-rolls-data.csv`. Its columns are the site's:
+    - always: `positives`, `replaced_mod`, `dps_delta_percent`;
+    - with tweaks: `negative_stat`, `riven_replaced_mod`, `one_slot_dps_delta_percent`, `final_dps_delta_percent`, `tweak_count`, `extra_swaps`, `tweak_refined`.
+- **Scoring options**: raw damage per shot or status damage per shot (one of the two), build for floor, and single shot. Their defaults come from the active Auto Build config, as on the site.
+  - Tweaks use that config's lists, its headshot-only rule and Cost Control (capacity is checked, and half rank is tried too).
+  - The arcanes' element needs are kept.
+- **Library files**: Export writes `{ version: 1, rivens }`, which the site's import reads.
+  - Import reads our file, the site's export (its `rivens` array) or a bare array.
+  - It then asks Merge (the default, the site's "B") or Replace (its "A").
+
+### 13.3 Deliberate differences
+
+- Every candidate in a step shares seeds 1..n (common random numbers), so placements are compared on the same rolls; the site rolls fresh each run.
+- A theoretical riven only rolls stats its weapon's rivens have. The site would leave a missing stat out and keep the 2+1/3+1 multiplier.
+- On Apply, a theoretical riven's id is replaced by a new `riven_` id.
+- All three tools need a build without a riven. Slot My Riven and Auto Riven refuse on the site too; Rolls data would otherwise score builds with two rivens.
+- With a riven equipped, the compare tries each riven in that riven's slot only (a reroll's old and new roll); without one, in every general slot. The site skips the riven's slot, so it ends up comparing second rivens.
+- Results show the Readout's Average DPS (the build's own sim time, 8 runs) before and after. The search's own numbers stay internal.
+- Slot My Riven and the compare score average DPS only, with no scoring options, as on the site. The compare uses 5 s runs.
+
+### 13.4 Rivens from a screenshot
+
+The site reads riven cards with a browser OCR model; this app uses the same Windows OCR as the build import.
+
+- `recognizeRivens` takes the full-image lines and splits two cards that sit side by side at the clear gap between their stat lines.
+- It reads each stat line against the weapon's riven stats, in the game's own words (`IN_GAME`), with the build recognition's fuzzy matching. It reads lines such as:
+  - "+152.3% Critical Chance" and "-41.6% Zoom";
+  - "x0.88 Damage to Corpus" and "+1.8 Punch Through";
+  - "-35.2% Weapon Recoil" and "+64.2% Fire Rate (x2 for Bows)".
+- OCR's "O" for 0, and the bow note after Fire Rate, are handled.
+- Shown values are effective values. They are stored at disposition 1.2 and rank 8, because the card shows neither.
+- Signs that were read are kept. A lost sign follows the layout, as on the site: the 4th stat is the negative, or the 3rd when the values don't fit three positives.
+- When the card's name names another weapon ("Lanka Critatox"), the review says so.
+
+What the menu offers:
+
+- **Read a riven** (from a file or the clipboard) opens the riven dialog on the result as a new riven, for review.
+  - Its title is "Riven from screenshot", with a note on what to check and on anything not read.
+  - It goes into the build's riven slot, else the selected slot, else the first empty one.
+  - With every slot full, Save keeps it in the user's rivens.
+- **Compare two rivens** reads two cards side by side and opens the compare.
+  - Each card can be edited first (the riven dialog's "Use in compare").
+  - After scoring, Equip left or Equip right applies one, as one undo step.
+  - "Allow element changes" shows when a placement changes the elements.
+- The arsenal import still can't read a riven's stats, because the upgrade screen shows only its name. Its review now says how to add them after applying.
+
+### 13.5 Not done
+
+- No riven art: rivens stay text cards.
+- Reading one riven from a screenshot of two cards takes the left one, and says so.
+- No real riven screenshots were available. The OCR tests use cards drawn for the test and read by Windows OCR, plus hand-made OCR for lost signs and misreads.

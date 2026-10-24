@@ -716,7 +716,7 @@ export function recognizeBuild(ocr, data) {
   const assumed = [...slots.filter(s => s.name && s.rankSource === 'assumed'), ...(exilus?.rankSource === 'assumed' ? [exilus] : [])];
   if (assumed.length) warnings.push(`Rank not visible for ${assumed.map(s => s.name).join(', ')}; assumed max rank.`);
   for (const s of slots) {
-    if (s.kind === 'riven') warnings.push(`Slot ${s.index + 1} holds a riven ("${s.raw}"); rivens are not supported and the slot is left empty.`);
+    if (s.kind === 'riven') warnings.push(`Slot ${s.index + 1} holds a riven ("${s.raw}"); this screen doesn't show a riven's stats, so the slot is left empty: add it with New riven… or Riven › Read a riven.`);
     else if (s.kind === 'unknown') warnings.push(`Slot ${s.index + 1} ("${s.raw}") did not match any mod.`);
   }
   const names = slots.map(s => s.name).filter(Boolean);

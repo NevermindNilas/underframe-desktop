@@ -18,7 +18,8 @@ export const BAND_LABEL = { high: 'High', check: 'Check', low: 'Low' };
 
 /** What the review says for a slot nothing was taken from, by recognizeBuild()'s slot state. */
 export const STATE_NOTE = {
-  riven: 'Riven: not supported',
+  // The arsenal shows a riven's name only: its stats come from the slot's New riven… or Riven › Read a riven.
+  riven: 'Riven: add its stats after applying (slot menu › New riven…, or Riven › Read a riven)',
   unknown: 'Not recognised',
   hidden: 'Not recognised: covered in the screenshot',
   unread: 'Not read from the screenshot',

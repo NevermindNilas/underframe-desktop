@@ -130,8 +130,11 @@ function RivenEditor({ dialog }) {
   const weapon = ctx.weaponByName.get(build.weaponName);
   const family = rivenFamily(weapon?.name);
   const catalogue = useMemo(() => rivenStatCatalogue(ctx.data, weapon), [ctx, weapon]);
-  const [draft, setDraft] = useState(() => draftFrom(dialog.riven));
-  const [toLibrary, setToLibrary] = useState(!dialog.riven);
+  // A riven read from a screenshot starts the draft as a new riven; a compare riven is edited for the compare only.
+  const [draft, setDraft] = useState(() => draftFrom(dialog.riven ?? dialog.initial ?? null));
+  const compare = dialog.purpose?.kind === 'compare';
+  const noSlot = dialog.slot == null && !compare;
+  const [toLibrary, setToLibrary] = useState(!dialog.riven && !compare);
   const [showErrors, setShowErrors] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const env = { data: ctx.data, weapon, family };
@@ -142,7 +145,7 @@ function RivenEditor({ dialog }) {
 
   // Focus starts on Disposition for a new riven and on the first stat for an edit.
   useEffect(() => {
-    const target = dialog.riven && draft.rows[0] ? `stat-${draft.rows[0].key}` : 'disposition';
+    const target = (dialog.riven || dialog.initial) && draft.rows[0] ? `stat-${draft.rows[0].key}` : 'disposition';
     requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector(`[data-riven-focus="${target}"]`)?.focus()));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -176,7 +179,8 @@ function RivenEditor({ dialog }) {
     onChange: patch => editRow(r.key, patch), onRemove: () => removeRow(i),
   });
   const messages = [...(showErrors ? issues.messages : []), ...(saveError ? [saveError] : [])];
-  const title = `${dialog.riven ? 'Edit riven' : 'New riven'} · ${family}`;
+  const title = compare ? `${dialog.purpose.side ? 'Right' : 'Left'} riven · ${family}`
+    : `${dialog.riven ? 'Edit riven' : dialog.initial ? 'Riven from screenshot' : 'New riven'} · ${family}`;
 
   return (
     <DialogSurface className={styles.surface} aria-describedby="riven-about" data-testid="riven-dialog">
@@ -189,8 +193,16 @@ function RivenEditor({ dialog }) {
             </Tooltip>
           </span>
         </DialogTitle>
-        <span id="riven-about" className={styles.srOnly}>{`${slotLabel(dialog.slot)}. ${ABOUT}`}</span>
+        <span id="riven-about" className={styles.srOnly}>{`${dialog.slot != null ? `${slotLabel(dialog.slot)}. ` : ''}${ABOUT}`}</span>
         <DialogContent className={styles.content}>
+          {dialog.initial ? (
+            <MessageBar intent={dialog.note ? 'warning' : 'info'} layout="multiline" style={{ flexShrink: 0 }} data-testid="riven-screenshot-note">
+              <MessageBarBody>
+                Read from the screenshot: check each value, the disposition (the card doesn't show it) and the rank.{dialog.note ? ` ${dialog.note}` : ''}
+                {noSlot ? ' Every slot is full, so Save keeps it in your rivens.' : ''}
+              </MessageBarBody>
+            </MessageBar>
+          ) : null}
           <div className={styles.top}>
             <Field
               label="Disposition"
@@ -225,19 +237,19 @@ function RivenEditor({ dialog }) {
             </Tooltip>
           </div>
           {messages.length ? (
-            <MessageBar intent="error" layout="multiline" tabIndex={-1} data-riven-focus="messages">
+            <MessageBar intent="error" layout="multiline" tabIndex={-1} style={{ flexShrink: 0 }} data-riven-focus="messages">
               <MessageBarBody>{messages.join(' ')}</MessageBarBody>
             </MessageBar>
           ) : null}
-          {inLibrary ? <Caption1 className={styles.muted}>Saving also updates this riven in your rivens.</Caption1> : (
+          {noSlot ? null : inLibrary ? <Caption1 className={styles.muted}>Saving also updates this riven in your rivens.</Caption1> : (
             <Checkbox checked={toLibrary} onChange={(_e, d) => setToLibrary(Boolean(d.checked))} label="Also save to your rivens" />
           )}
         </DialogContent>
         <DialogActions position="start" className={styles.footerStart}>
-          <PaperLine ctx={ctx} build={build} slot={dialog.slot} riven={issues.riven} ok={issues.ok} />
+          {dialog.slot != null ? <PaperLine ctx={ctx} build={build} slot={dialog.slot} riven={issues.riven} ok={issues.ok} /> : null}
         </DialogActions>
         <DialogActions position="end">
-          <Button appearance="primary" onClick={save} data-testid="riven-save">Save</Button>
+          <Button appearance="primary" onClick={save} data-testid="riven-save">{compare ? 'Use in compare' : noSlot ? 'Save to your rivens' : 'Save'}</Button>
           <Button onClick={() => actions.closeRivenDialog()}>Cancel</Button>
         </DialogActions>
       </DialogBody>
@@ -252,7 +264,7 @@ export function RivenDialog() {
   return (
     <Dialog open={Boolean(dialog)} onOpenChange={(_e, d) => { if (!d.open) actions.closeRivenDialog(); }}>
       {/* A fresh editor per opening: the draft starts from the slot's riven (or empty) each time. */}
-      {dialog ? <RivenEditor key={`${dialog.slot}:${dialog.riven?.id ?? 'new'}`} dialog={dialog} /> : null}
+      {dialog ? <RivenEditor key={`${dialog.slot}:${dialog.riven?.id ?? 'new'}:${dialog.purpose?.side ?? ''}:${dialog.initial ? 'shot' : ''}`} dialog={dialog} /> : null}
     </Dialog>
   );
 }

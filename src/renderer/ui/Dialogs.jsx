@@ -1,4 +1,5 @@
-// Blocking dialogs: "Save changes?" when leaving a dirty build, About, and Keyboard shortcuts.
+// Blocking dialogs: "Save changes?" when leaving a dirty build, About, Keyboard shortcuts, and Merge or Replace when
+// importing rivens.
 import {
   Body1, Button, Caption1, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link,
   Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, makeStyles, tokens,
@@ -208,6 +209,31 @@ function ShortcutsDialog() {
   );
 }
 
+/** Importing rivens into a library that has some: Merge (the site's "B", the default) or Replace (its "A"). */
+function RivenImportDialog({ dialog }) {
+  const answer = choice => {
+    actions.closeDialog();
+    dialog.resolve(choice);
+  };
+  return (
+    <Dialog modalType="alert" open onOpenChange={(_e, d) => { if (!d.open) answer(null); }}>
+      <DialogSurface aria-describedby="riven-import-body" data-testid="riven-import-dialog">
+        <DialogBody>
+          <DialogTitle>Import {dialog.incoming} {dialog.incoming === 1 ? 'riven' : 'rivens'}</DialogTitle>
+          <DialogContent id="riven-import-body">
+            <Body1>You have {dialog.existing} {dialog.existing === 1 ? 'riven' : 'rivens'}. Merge adds the new ones and skips copies of rivens you already have; Replace swaps your rivens for the file's. Both can be undone.</Body1>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={() => answer('merge')} data-testid="riven-import-merge">Merge</Button>
+            <Button onClick={() => answer('override')} data-testid="riven-import-replace">Replace</Button>
+            <Button onClick={() => answer(null)}>Cancel</Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
 export function Dialogs() {
   const dialog = useApp(s => s.dialog);
   if (!dialog) return null;
@@ -215,5 +241,6 @@ export function Dialogs() {
   if (dialog.type === 'about') return <AboutDialog />;
   if (dialog.type === 'run') return <RunDialog />;
   if (dialog.type === 'shortcuts') return <ShortcutsDialog />;
+  if (dialog.type === 'riven-import') return <RivenImportDialog dialog={dialog} />;
   return null;
 }

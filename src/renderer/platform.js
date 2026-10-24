@@ -61,6 +61,17 @@ const fallback = {
       return doc;
     },
   },
+  files: {
+    // A download in the browser; opening needs the desktop app.
+    saveText: async ({ kind, name, text }) => {
+      const url = URL.createObjectURL(new Blob([text], { type: kind === 'json' ? 'application/json' : 'text/csv' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: name });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { path: name };
+    },
+    openText: async () => ({ cancelled: true }),
+  },
   openExternal: async url => Boolean(window.open(url, '_blank', 'noopener')),
   ocr: {
     recognize: async () => ({ error: { code: 'unsupported-platform', message: 'Only available in the desktop app' } }),

@@ -11,6 +11,7 @@ import { createBuildsStore } from './builds-store.js';
 import { createBuffPresetsStore } from './buff-presets-store.js';
 import { createAutoBuildStore } from './auto-build-store.js';
 import { createRivensStore } from './rivens-store.js';
+import { createFiles } from './files.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
 import { SCENES_ARG, attachScenes, scenesDir } from './scenes.js';
@@ -44,6 +45,7 @@ let store = null;
 let buffPresets = null;
 let autoBuild = null;
 let rivens = null;
+let files = null;
 let backdrop = 'solid';
 
 const appRoot = () => app.getAppPath();
@@ -230,6 +232,9 @@ function registerIpc() {
   // The riven library (one per user): get() and set(library), both resolve to the stored { version, rivens }.
   handle('uf:rivens:get', () => rivens.get());
   handle('uf:rivens:set', library => rivens.set(library));
+  // Text files through the system dialogs: the rolls data CSV, the riven library's JSON.
+  handle('uf:files:saveText', req => files.saveText(req));
+  handle('uf:files:openText', req => files.openText(req));
   handle('uf:openExternal', url => openExternal(url));
   // Screenshot recognition: 'uf:ocr:recognize' and 'uf:ocr:captureGame'.
   registerOcrIpc(handle);
@@ -242,7 +247,7 @@ function registerIpc() {
   handle('uf:smokeCapture', tag => (smokeRun ? smokeRun.capture(tag) : null));
   handle('uf:smokeClick', (x, y) => (smokeRun ? smokeRun.click(x, y) : false));
   handle('uf:smokePress', (key, modifiers) => (smokeRun ? smokeRun.press(String(key), modifiers) : false));
-  handle('uf:smokeOcrImage', () => (smokeRun ? smokeRun.ocrImage() : null));
+  handle('uf:smokeOcrImage', kind => (smokeRun ? smokeRun.ocrImage(kind === 'riven' ? 'riven' : 'build') : null));
 
   handle('uf:sceneCapture', name => (scenesRun ? scenesRun.capture(String(name)) : null));
   handle('uf:scenesDone', () => scenesRun?.done());
@@ -298,6 +303,7 @@ function start() {
   buffPresets = createBuffPresetsStore(app.getPath('userData'));
   autoBuild = createAutoBuildStore(app.getPath('userData'));
   rivens = createRivensStore(app.getPath('userData'));
+  files = createFiles({ window: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null), automated });
   registerIpc();
   Menu.setApplicationMenu(buildMenu());
   mainWindow = createWindow();

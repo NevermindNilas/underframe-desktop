@@ -545,7 +545,7 @@ async function checkKeyboard(app, errors, checks) {
   const tabPath = [];
   let reached = false;
   if (await app.uf.smokePress?.('Tab')) {
-    for (let i = 0; i < 16 && !reached; i++) {
+    for (let i = 0; i < 20 && !reached; i++) {
       if (i) await app.uf.smokePress('Tab');
       // Tabster's dummy stops hand focus on within a frame or two: wait for the real stop.
       await waitFor(() => document.activeElement && document.activeElement !== document.body && !document.activeElement.hasAttribute('data-tabster-dummy'), 300);
@@ -1097,6 +1097,99 @@ async function checkRiven(app, errors, checks) {
   log('riven dialog opens and closes');
 }
 
+/**
+ * The riven tools (docs/port-rivens.md 13): the capacity line's Riven menu with real clicks, Auto riven on a short
+ * budget (Apply adds a riven, Undo takes it away), Rolls data saved as CSV, and, with UF_SMOKE_RIVEN_IMAGE, two
+ * rivens read from a screenshot and compared.
+ */
+async function checkRivenTools(app, errors, checks) {
+  const { store, actions, uf } = app;
+  const quick = { sampleCount: 1, simulationTimeSeconds: 1, negativeStat: 'Zoom', excludedStats: ['Punch Through', 'ColdDamage', 'HeatDamage', 'ElectricityDamage', 'ToxinDamage', 'ViralDamage', 'CorrosiveDamage', 'MagneticDamage', 'RadiationDamage', 'GasDamage', 'BlastDamage', 'Damage vs.Corpus', 'Damage vs.Infested', 'Damage vs.Orokin', 'Damage vs.Techrot', 'Damage vs.Scaldra', 'Status Damage', 'Weak Point Damage', 'Weak Point Critical Chance', 'Ammo Efficiency', 'Magazine Reload While Holstered', 'Status Chance', 'Fire Rate/Attack Speed'] };
+  await actions.newBuild({ force: true });
+  actions.setWeapon(SMOKE_PLAN.weapon);
+  SMOKE_PLAN.mods.forEach(([name, rank], slot) => actions.equipMod(slot, name, rank, { focus: false }));
+  actions.closePicker({ focus: false });
+  await nextFrame();
+  if (!(await realClick(app, await waitFor(() => $('[data-testid="riven-tools-open"]'), 2000), errors, 'Riven tools button'))) return;
+  const item = await waitFor(() => $('[data-testid="riven-tools-auto"]'), 2000);
+  if (!item) { errors.push('riven tools: the Riven menu has no "Auto riven…"'); return; }
+  await capture(uf, 'riven-tools-menu', errors);
+  await realClick(app, item, errors, 'Auto riven');
+  const dialog = await waitFor(() => $('[data-testid="riven-tool-dialog"][data-tool="auto"]'), 2000);
+  if (!dialog) { errors.push('riven tools: "Auto riven…" did not open its setup'); return; }
+  if (!(await waitFor(() => dialog.contains(document.activeElement), 1500))) errors.push(`riven tools: the setup opened with focus on ${testIdOfFocus()}`);
+  await checkDialogLayout(dialog, 'riven tools', errors, checks);
+  await capture(uf, 'riven-tools-setup', errors);
+  const t0 = performance.now();
+  actions.startRivenTool(quick);
+  const done = await waitFor(() => (['done', 'error'].includes(store.get().rivenTool?.status) ? store.get().rivenTool : null), 120000);
+  checks.autoRivenMs = Math.round(performance.now() - t0);
+  if (!done) { errors.push('riven tools: Auto riven did not finish in 120 s'); return; }
+  if (done.status === 'error') { errors.push(`riven tools: Auto riven failed: ${done.error}`); return; }
+  if (!done.result.improved) { errors.push(`riven tools: Auto riven found nothing: ${done.result.message}`); return; }
+  checks.autoRiven = `${Math.round(done.result.readout.before)} -> ${Math.round(done.result.readout.proposals.auto)}`;
+  await capture(uf, 'riven-tools-result', errors);
+  const apply = await waitFor(() => $('[data-testid="riven-tool-apply-auto"]'), 2000);
+  if (!(await realClick(app, apply, errors, 'Auto riven Apply'))) return;
+  if (!(await waitFor(() => store.get().build.mods.some(m => m?.isRiven), 2000))) { errors.push('riven tools: Apply did not equip the riven'); return; }
+  if ($('[data-testid="riven-tool-dialog"]')) errors.push('riven tools: the dialog stayed open after Apply');
+  actions.undo();
+  if (store.get().build.mods.some(m => m?.isRiven)) errors.push('riven tools: Undo did not take the riven away');
+
+  // Rolls data: a short scan, then the CSV (automated runs save without a dialog).
+  actions.openRivenTool('rolls');
+  await waitFor(() => $('[data-testid="riven-tool-dialog"][data-tool="rolls"]'), 2000);
+  actions.startRivenTool(quick);
+  const rolls = await waitFor(() => (['done', 'error'].includes(store.get().rivenTool?.status) ? store.get().rivenTool : null), 120000);
+  if (rolls?.status !== 'done') errors.push(`riven tools: Rolls data ${rolls ? `failed: ${rolls.error}` : 'did not finish'}`);
+  else {
+    checks.rollsRows = rolls.result.rows.length;
+    if (!$('[data-testid="riven-rolls-table"]')) errors.push('riven tools: no rolls table in the result');
+    if (!(await actions.saveRollsCsv())) errors.push('riven tools: the CSV was not saved');
+  }
+  actions.closeRivenTool();
+
+  // Two rivens from a screenshot, compared.
+  const bytes = await uf.smokeOcrImage?.('riven');
+  if (bytes) {
+    const read = await actions.readRivenScreenshot({ bytes, two: true });
+    if (!read) errors.push('riven tools: two rivens were not read from UF_SMOKE_RIVEN_IMAGE');
+    else {
+      const cmp = await waitFor(() => $('[data-testid="riven-tool-dialog"][data-tool="compare"]'), 2000);
+      if (!cmp || store.get().rivenTool?.compare?.rivens?.length !== 2) errors.push('riven tools: the compare did not open with two rivens');
+      else {
+        await capture(uf, 'riven-compare-setup', errors);
+        actions.startRivenTool({});
+        const c = await waitFor(() => (['done', 'error'].includes(store.get().rivenTool?.status) ? store.get().rivenTool : null), 120000);
+        if (c?.status !== 'done') errors.push(`riven tools: the compare ${c ? `failed: ${c.error}` : 'did not finish'}`);
+        else {
+          checks.rivenCompare = $('[data-testid="riven-compare-summary"]')?.textContent ?? null;
+          await capture(uf, 'riven-compare-result', errors);
+        }
+      }
+      actions.closeRivenTool();
+    }
+    // One riven from the same screenshot: the riven dialog opens with what was read, for review.
+    await waitFor(() => !$('[data-testid="riven-tool-dialog"]'), 2000);
+    if (!(await actions.readRivenScreenshot({ bytes }))) errors.push('riven tools: no riven was read for the riven dialog');
+    else if (!(await waitFor(() => $('[data-testid="riven-screenshot-note"]'), 2000))) errors.push('riven tools: the riven dialog did not open with the screenshot note');
+    else {
+      checks.rivenFromShot = $$('[data-testid^="riven-row-"]').length;
+      await capture(uf, 'riven-from-screenshot', errors);
+      actions.closeRivenDialog();
+    }
+  }
+  // The library: import (merge) a riven file, then export it (automated runs save without a dialog).
+  const one = { isRiven: true, id: 'smoke_riven', family: 'Braton', disposition: 1.2, rank: 8, stats: [{ name: 'Critical Chance', value: 1, unit: '%' }, { name: 'Multishot', value: 0.6, unit: '%' }] };
+  if (!(await actions.importRivenLibrary({ text: JSON.stringify({ rivens: [one] }), mode: 'merge' }))) errors.push('riven tools: importing a riven file failed');
+  else if (!store.get().rivenLibrary.rivens.some(r => r.id === 'smoke_riven')) errors.push('riven tools: the imported riven is not in the library');
+  else if (!(await actions.exportRivenLibrary())) errors.push('riven tools: exporting the library failed');
+  else checks.rivenLibraryFiles = store.get().rivenLibrary.rivens.length;
+  await waitFor(() => !$('[data-testid="riven-tool-dialog"]'), 2000);
+  checks.rivenTools = true;
+  log('riven tools run and apply');
+}
+
 export async function runSmoke(app, { t0 }) {
   const { actions, store, uf, timings } = app;
   const errors = [];
@@ -1194,6 +1287,7 @@ export async function runSmoke(app, { t0 }) {
     await checkFeatured(app, errors, checks);
     await checkWeaponOptions(app, errors, checks);
     await checkRiven(app, errors, checks);
+    await checkRivenTools(app, errors, checks);
     // Clear toasts so the final screenshot shows the app itself.
     clearToasts();
     await sleep(500);

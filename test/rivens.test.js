@@ -431,3 +431,26 @@ test('dialog draft: typed in-game values become stored rolls; an untouched edit 
   assert.equal(D.parseTyped('−35,6 %'), -35.6);
   assert.ok(Number.isNaN(D.parseTyped('abc')));
 });
+
+test('library files: ours and the site\'s export read back; merge skips copies, renames taken ids; override replaces', async () => {
+  const RV = await import('../src/shared/rivens.js');
+  const a = { isRiven: true, id: 'riven_1', family: 'Braton', disposition: 1.2, rank: 8, stats: [{ name: 'Critical Chance', value: 1, unit: '%' }, { name: 'Multishot', value: 0.5, unit: '%' }] };
+  const b = { ...a, id: 'riven_2', stats: [{ name: 'BaseDamage', value: 1, unit: '%' }, { name: 'Multishot', value: 0.5, unit: '%' }] };
+  const lib = RV.normalizeRivenLibrary({ rivens: [a] });
+  const text = RV.rivenLibraryFileText(lib);
+  assert.deepEqual(RV.parseRivenLibraryFile(text).rivens, lib.rivens);
+  const site = JSON.stringify({ builds: [], rivens: [b, { ...a, id: '' }, { nope: true }] });
+  let n = 0;
+  const read = RV.parseRivenLibraryFile(site, { newId: () => `new${++n}` });
+  assert.equal(read.rivens.length, 2);
+  assert.equal(read.dropped, 1);
+  assert.equal(read.rivens[1].id, 'new1');
+  assert.throws(() => RV.parseRivenLibraryFile('{}'), /no rivens list/);
+  assert.throws(() => RV.parseRivenLibraryFile('nope'), /isn't JSON/);
+  const merged = RV.importRivensInto(lib, [a, { ...b, id: 'riven_1' }], 'merge', { newId: () => 'fresh' });
+  assert.equal(merged.added, 1);
+  assert.equal(merged.skipped, 1);
+  assert.deepEqual(merged.library.rivens.map(r => r.id), ['riven_1', 'fresh']);
+  const over = RV.importRivensInto(lib, [b], 'override');
+  assert.deepEqual(over.library.rivens.map(r => r.id), ['riven_2']);
+});

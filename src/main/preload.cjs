@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('uf', {
     get: () => call('uf:autoBuild:get'),
     set: doc => call('uf:autoBuild:set', doc),
   },
+  // Text files through the system dialogs. saveText({ kind: 'csv'|'json', name, text }) -> { path } or { cancelled };
+  // openText({ kind }) -> { text, name } or { cancelled }.
+  files: {
+    saveText: req => call('uf:files:saveText', req),
+    openText: req => call('uf:files:openText', req),
+  },
   openExternal: url => call('uf:openExternal', String(url)),
   /**
    * Screenshot recognition. recognize(bytes): PNG/JPEG bytes (Uint8Array or ArrayBuffer, at most 25 MB) to the
@@ -67,7 +73,7 @@ contextBridge.exposeInMainWorld('uf', {
   // Smoke-only: a real (OS-level) key press, e.g. smokePress('Tab', ['shift']).
   smokePress: (key, modifiers = []) => (smoke ? call('uf:smokePress', String(key), Array.isArray(modifiers) ? modifiers.map(String) : []) : Promise.resolve(false)),
   // Smoke-only: the bytes of UF_SMOKE_OCR_IMAGE, or null.
-  smokeOcrImage: () => (smoke ? call('uf:smokeOcrImage') : Promise.resolve(null)),
+  smokeOcrImage: kind => (smoke ? call('uf:smokeOcrImage', kind === 'riven' ? 'riven' : 'build') : Promise.resolve(null)),
 
   // Scene-capture mode (UF_SCENES): save a PNG of the window, then report the list when done.
   scenes,

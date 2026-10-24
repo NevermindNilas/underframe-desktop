@@ -76,6 +76,8 @@ export function addsElement(mod) {
 }
 
 const isAugment = mod => !GENERIC_COMPAT.has(mod?.['Compat Name'] ?? '');
+/** A weapon's own augment (its compatibility names the weapon or its family, not a weapon class). */
+export const isAugmentMod = isAugment;
 
 /** Conditional bonus types that add an element: the site forces augments with one of these into every run. */
 const ELEMENT_BONUS = /^(Heat|Cold|Electricity|Gas|Toxin|Viral|Magnetic|Radiation|Corrosive|Blast) Damage$/;
@@ -324,7 +326,8 @@ export function capacityPlan(env, mods) {
     for (let i = 0; i < SLOT_COUNT; i++) {
       const s = mods[i];
       const mod = s && env.index.byName.get(s.name);
-      const want = normalizePolarity(mod?.Polarity);
+      // An Omni riven matches any polarity but Umbra: an unpolarised (or Umbra) slot gets Madurai.
+      const want = s?.isRiven ? (pol[i] && pol[i] !== 'AP_UMBRA' ? pol[i] : RIVEN_FORMA_POLARITY) : normalizePolarity(mod?.Polarity);
       if (!want || want === pol[i]) continue;
       const next = pol.slice();
       next[i] = want;
@@ -338,6 +341,9 @@ export function capacityPlan(env, mods) {
   }
   return null;
 }
+
+/** The polarity the Forma plan gives a riven's slot (an Omni riven halves its drain in any but Umbra). */
+export const RIVEN_FORMA_POLARITY = 'AP_ATTACK';
 
 /** Whether mods fit the capacity with at most `maxForma` Forma (capacityPlan() finds a plan). */
 export const fitsCapacity = (env, mods) => capacityPlan(env, mods) !== null;
@@ -407,7 +413,9 @@ export function candidateInput(env, cand, { maxTime, appStateRef = 1, plain = fa
 
 // ---------- the pipeline ----------
 
-const modsKey = mods => mods.map(s => (s ? `${s.name}:${s.rank}${s.stacks != null ? `x${s.stacks}` : ''}` : '')).join(',');
+// A riven is its rolls (every riven of a family has the same name).
+const slotKey = s => (s.isRiven ? `riven:${s.disposition}:${s.rank}:${(s.stats ?? []).map(x => `${x.name}=${x.value}`).join('|')}` : `${s.name}:${s.rank}${s.stacks != null ? `x${s.stacks}` : ''}`);
+const modsKey = mods => mods.map(s => (s ? slotKey(s) : '')).join(',');
 const namesIn = mods => mods.filter(Boolean).map(s => s.name);
 const fmt = n => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '—');
 const permutations = list => (list.length <= 1 ? [list] : list.flatMap((x, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map(p => [x, ...p])));
@@ -858,6 +866,9 @@ export function qualityOfLifeSwaps(env, cand, locked, { fits = () => true, block
   if (swaps.length) onSwap(`Swapped: ${swaps.join(', ')}.`);
   return { mods, arcanes: cand.arcanes };
 }
+
+/** The mod on `mods` (slot objects) that `name` conflicts with (itself, or an incompatible one), or null. */
+export const conflictingModIn = (name, mods, index) => conflictingMod(name, mods.map(m => m?.name ?? null), index);
 
 /** Split jobs into tasks of at most RUNS_PER_CHUNK runs: [{ job, seeds }]. */
 export function chunkJobs(jobs, size = RUNS_PER_CHUNK) {

@@ -10,9 +10,10 @@ const CANCEL_GRACE_MS = 1500;
  * @param {object} o.settings the active config's settings
  * @param {number|null} o.cores engine workers (null: automatic)
  * @param {(p: { percent, step, detail, runs, elapsedMs }) => void} o.onProgress
+ * @param {'riven'|null} [o.job] 'riven' runs a riven tool (riven-tool-job.js) with `tool`, `options` and `rivens`
  * @returns {{ promise: Promise<{ status: 'done', result } | { status: 'cancelled' }>, cancel(): void }}
  */
-export function startAutoBuildWorker({ build, start, settings, cores = null, onProgress = () => {} }) {
+export function startAutoBuildWorker({ build, start, settings, cores = null, onProgress = () => {}, job = null, tool = null, options = null, rivens = null }) {
   // The literal `new Worker(new URL(...), { type: 'module' })` form is what Vite bundles as a module worker.
   const worker = new Worker(new URL('./auto-build.worker.js', import.meta.url), { type: 'module', name: 'auto-build' });
   let finished = false;
@@ -36,7 +37,7 @@ export function startAutoBuildWorker({ build, start, settings, cores = null, onP
       e?.preventDefault?.();
       if (finished) return;
       end();
-      reject(new Error(`The Auto build worker stopped: ${e?.message || 'unknown error'}`));
+      reject(new Error(`The ${job === 'riven' ? 'riven tool' : 'Auto build'} worker stopped: ${e?.message || 'unknown error'}`));
     };
     worker.onmessageerror = () => {
       if (finished) return;
@@ -44,7 +45,7 @@ export function startAutoBuildWorker({ build, start, settings, cores = null, onP
       reject(new Error('The Auto build worker sent an unreadable message.'));
     };
   });
-  worker.postMessage({ type: 'start', build, start, settings, cores });
+  worker.postMessage({ type: 'start', build, start, settings, cores, ...(job ? { job, tool, options, rivens } : {}) });
   return {
     promise,
     cancel() {

@@ -26,6 +26,7 @@ import * as AS from '../../shared/auto-build-settings.js';
 import { arcaneSummary, arcaneSupport, indexArcanes, isArcaneCompatible } from '../../shared/arcanes.js';
 import { nothingToFill } from '../../shared/auto-build.js';
 import { isModCompatible, maxRank } from '../../shared/mods.js';
+import { RIVEN_MAX_RANK, isRiven, rivenShortName } from '../../shared/rivens.js';
 import { modeLabel } from '../../shared/fire-modes.js';
 import { arcaneEntry, buildModIndex, parseQuery, searchEntries, sortResults } from '../../shared/mod-search.js';
 import { defaultPoolSize } from '../auto-build-pool.js';
@@ -396,6 +397,14 @@ function Progress() {
   );
 }
 
+/** A change's new item as text: "Serration", "Point Strike R3" below max rank, "Braton Riven R5" (a riven's max is 8). */
+export function changeName(ctx, c) {
+  const riven = isRiven(c.to);
+  const max = riven ? RIVEN_MAX_RANK : maxRank(ctx.index.byName.get(c.to.name));
+  const name = riven ? rivenShortName(c.to) : c.to.name;
+  return c.kind === 'mod' && c.to.rank !== max ? `${name} R${c.to.rank}` : name;
+}
+
 /** The capacity the result needs with its Forma plan applied: { cap, over }. */
 function resultCapacity(ctx, build, r) {
   const planned = withFormaPlan(ctx, { ...build, mods: r.mods }, r.formaPlan);
@@ -471,7 +480,7 @@ function ResultView() {
                 <ArrowRightRegular aria-hidden="true" className={styles.arrow} />
                 {c.to ? <Thumb name={c.to.name} kind={c.kind} /> : <span className={mergeClasses(styles.thumb, styles.emptyThumb)} aria-hidden="true" />}
                 <span className={styles.changeText} title={`${c.where}: ${c.from?.name ?? 'empty'} → ${c.to?.name ?? 'empty'}`}>
-                  <Body1Strong>{c.to ? `${c.to.name}${c.kind === 'mod' && c.to.rank !== maxRank(ctx.index.byName.get(c.to.name)) ? ` R${c.to.rank}` : ''}` : 'Empty'}</Body1Strong>
+                  <Body1Strong>{c.to ? changeName(ctx, c) : 'Empty'}</Body1Strong>
                   <Caption1 className={styles.muted}>{c.where}{c.from ? ` · replaces ${c.from.name}` : ' · was empty'}</Caption1>
                 </span>
               </li>
