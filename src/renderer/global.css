@@ -1,0 +1,66 @@
+/* Page-level rules that Griffel classes cannot express. Colours come from Fluent tokens or theme.js. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+/* The window itself never scrolls; each region scrolls on its own (UX spec 2.3). */
+body {
+  overscroll-behavior: none;
+}
+
+/* Thin scrollbars in the Fluent neutral stroke colour, like WinUI's collapsed scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--colorNeutralStroke1Hover) transparent;
+}
+
+/* Window controls overlay: the custom title bar is a drag region; controls inside opt out. */
+.uf-drag {
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.uf-no-drag {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+/* Editor fields scroll into view with room to spare (WCAG 2.4.11). */
+[data-scroll-region] :focus {
+  scroll-margin: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  /* Decorative accents carry no meaning; drop them so they cannot be mistaken for controls. */
+  .uf-rarity-accent {
+    display: none;
+  }
+  .uf-bar-fill {
+    background: CanvasText !important;
+    forced-color-adjust: none;
+  }
+  .uf-pool-tile {
+    border-top-color: CanvasText !important;
+  }
+  /* Fluent Links rendered as <button> get ButtonText; in forced colours every link must look like one. */
+  .fui-Link {
+    color: LinkText !important;
+    text-decoration-line: underline !important;
+  }
+}

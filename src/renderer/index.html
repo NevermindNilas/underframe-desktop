@@ -3,50 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="light dark">
   <title>Underframe Desktop</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="styles.css">
-  <script type="module" src="app.js"></script>
+  <script type="module" src="./main.jsx"></script>
 </head>
-<body data-phase="loading">
-  <a class="skip-link" href="#editor">Skip to build editor</a>
-
-  <div id="loading" class="screen" role="status" aria-live="polite">
-    <div class="screen-card">
-      <div class="logo" aria-hidden="true">UF</div>
-      <h1>Underframe Desktop</h1>
-      <div class="spinner" aria-hidden="true"></div>
-      <p id="loading-text">Starting…</p>
-    </div>
-  </div>
-
-  <div id="error" class="screen" role="alert">
-    <div class="screen-card">
-      <h1>Couldn't start</h1>
-      <p id="error-text" class="error-text"></p>
-      <p class="muted">The game data or the damage engine failed to load. If this keeps happening, reinstall the app.</p>
-      <button id="retry" class="btn primary" type="button">Try again</button>
-    </div>
-  </div>
-
-  <div id="app" class="app">
-    <header class="topbar">
-      <div class="brand"><span class="logo small" aria-hidden="true">UF</span> Underframe Desktop</div>
-      <div class="topbar-hint muted small">Ctrl+S save · Ctrl+Enter run · Ctrl+N new build</div>
-    </header>
-    <nav id="sidebar" class="col col-left" aria-label="Builds"></nav>
-    <main class="col col-center">
-      <section id="editor" class="panel" aria-label="Build editor" tabindex="-1"></section>
-      <section id="sweep" class="panel" aria-label="Best mod search"></section>
-      <section id="results" class="panel" aria-label="Simulation results"></section>
-      <section id="compare" class="panel" aria-label="Compare pinned results"></section>
-    </main>
-    <aside class="col col-right" aria-label="Target and stats">
-      <section id="target" class="panel"></section>
-      <section id="stats" class="panel"></section>
-    </aside>
-    <footer id="footer" class="footer"></footer>
-  </div>
+<body>
+  <div id="root"></div>
 </body>
 </html>

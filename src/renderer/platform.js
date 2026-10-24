@@ -17,8 +17,7 @@ function writeDevBuilds(list) {
 }
 
 const fallback = {
-  appInfo: async () => ({ version: 'dev', electron: null, chrome: null, platform: 'browser' }),
-  manifest: async () => (await fetch('/core/manifest.json')).json(),
+  appInfo: async () => ({ version: 'dev', electron: null, chrome: null, platform: 'browser', backdrop: 'solid' }),
   checkUpstream: async () => ({ local: null, remote: null, outdated: false, error: 'Only available in the desktop app' }),
   builds: {
     list: async () => readDevBuilds(),
@@ -33,9 +32,19 @@ const fallback = {
     remove: async id => writeDevBuilds(readDevBuilds().filter(b => b.id !== id)),
   },
   openExternal: async url => Boolean(window.open(url, '_blank', 'noopener')),
+  backdrop: 'solid',
+  onCloseRequest: () => {},
+  closeAnswer: async () => {},
   smoke: false,
   smokeResult: async () => {},
   smokeCapture: async () => null,
+  smokeClick: async () => false,
+  scenes: false,
+  sceneBootError: false,
+  sceneCapture: async () => null,
+  scenesDone: async () => {},
+  scenesFailed: async () => {},
+  sceneRequestClose: async () => {},
 };
 
 export const uf = window.uf ?? fallback;

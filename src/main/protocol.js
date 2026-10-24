@@ -13,7 +13,7 @@ export const PAGE_CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://pub-53253a3672614c5dacba09a15b7bf057.r2.dev",
+  "img-src 'self' data:",
   "connect-src 'self'",
   "worker-src 'self'",
   "font-src 'self'",
@@ -26,10 +26,12 @@ export const WORKER_CSP = "default-src 'self'; script-src 'self' 'unsafe-eval' '
 /** Privileges for protocol.registerSchemesAsPrivileged (must run before app ready). */
 export const SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true };
 
-/** URL path prefix -> directory relative to the app root. Prefixes end in '/'. */
+/**
+ * URL path prefix -> directory relative to the app root. Prefixes end in '/'.
+ * /renderer/ is the Vite build of src/renderer (npm run build:renderer); src/shared is bundled into it.
+ */
 const DIR_ROUTES = [
-  ['/renderer/', 'src/renderer'],
-  ['/shared/', 'src/shared'],
+  ['/renderer/', 'build/renderer'],
   ['/core/engine/', 'core/engine'],
 ];
 
@@ -70,7 +72,7 @@ function safeSegments(pathname) {
 }
 
 /**
- * Map a URL pathname ('/renderer/app.js') to a path relative to the app root ('src/renderer/app.js').
+ * Map a URL pathname ('/renderer/index.html') to a path relative to the app root ('build/renderer/index.html').
  * Returns null for anything outside the routes or any traversal attempt.
  */
 export function resolveAppPath(pathname) {

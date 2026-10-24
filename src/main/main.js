@@ -1,6 +1,7 @@
-// Electron main process: app:// protocol, the window, and the IPC surface behind window.uf.
+// Electron main process: app:// protocol, the window (Mica, custom title bar), and the IPC surface behind window.uf.
 
-import { app, BrowserWindow, ipcMain, Menu, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol, session, shell, systemPreferences } from 'electron';
+import { mkdtempSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,22 +10,31 @@ import { ORIGIN, handleAppProtocol, isAppUrl, registerAppScheme } from './protoc
 import { createBuildsStore } from './builds-store.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
+import { SCENES_ARG, attachScenes, scenesDir } from './scenes.js';
+import { MIN_SIZE, initialSize, themeSourceFrom, titleBarOverlay, wantsMica, windowBackground, zoomFor } from './window-chrome.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const smoke = isSmoke();
+const scenes = scenesDir();
+const automated = smoke || Boolean(scenes);
 const START_URL = `${ORIGIN}/renderer/index.html`;
+/** How long the renderer has to answer a close request before the window closes anyway. */
+const CLOSE_ANSWER_TIMEOUT_MS = 5000;
 
 // Must happen before ready.
 registerAppScheme(protocol);
 
-// Smoke runs keep away from the user's builds and skip the single-instance lock.
+// Automated runs keep away from the user's builds and skip the single-instance lock.
 if (smoke) app.setPath('userData', path.join(os.tmpdir(), 'underframe-desktop-smoke'));
-const primary = smoke || app.requestSingleInstanceLock();
+else if (scenes) app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'underframe-desktop-scenes-')));
+const primary = automated || app.requestSingleInstanceLock();
 if (!primary) app.quit();
 
 let mainWindow = null;
 let smokeRun = null;
+let scenesRun = null;
 let store = null;
+let backdrop = 'solid';
 
 const appRoot = () => app.getAppPath();
 
@@ -38,17 +48,49 @@ function openExternal(url) {
   return true;
 }
 
+function highContrastText() {
+  try {
+    return systemPreferences.getColor('window-text');
+  } catch {
+    return null;
+  }
+}
+
+function overlayOptions() {
+  return titleBarOverlay({
+    dark: nativeTheme.shouldUseDarkColors,
+    highContrast: nativeTheme.shouldUseHighContrastColors,
+    highContrastText: nativeTheme.shouldUseHighContrastColors ? highContrastText() : null,
+  });
+}
+
+/** Keep the caption glyphs and the solid fallback colour in step with the system theme, live. */
+function syncChrome(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.setTitleBarOverlay(overlayOptions());
+  } catch {
+    // not supported on this platform
+  }
+  if (backdrop === 'solid') win.setBackgroundColor(windowBackground({ backdrop, dark: nativeTheme.shouldUseDarkColors }));
+}
+
 function createWindow() {
   const second = process.env.UF_SECOND_MONITOR === '1';
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
+  const size = initialSize(process.env);
+  backdrop = wantsMica({
+    platform: process.platform, release: os.release(), env: process.env, highContrast: nativeTheme.shouldUseHighContrastColors,
+  }) ? 'mica' : 'solid';
+  const options = {
+    ...size,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
     ...(second ? { x: -3400, y: 40 } : {}),
     show: false,
-    backgroundColor: '#0f1115',
+    backgroundColor: windowBackground({ backdrop, dark: nativeTheme.shouldUseDarkColors }),
     title: 'Underframe Desktop',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: overlayOptions(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
@@ -58,11 +100,34 @@ function createWindow() {
       webSecurity: true,
       devTools: !app.isPackaged,
       spellcheck: false,
-      additionalArguments: smoke ? [SMOKE_ARG] : [],
+      additionalArguments: [
+        `--uf-backdrop=${backdrop}`,
+        ...(smoke ? [SMOKE_ARG] : []),
+        ...(scenes ? [SCENES_ARG] : []),
+        // Scene mode only: fail the boot on purpose to capture the loading and boot error screens.
+        ...(scenes && process.env.UF_SCENE_BOOT_ERROR === '1' ? ['--uf-scene-boot-error'] : []),
+      ],
     },
-  });
+  };
+  let win;
+  try {
+    win = new BrowserWindow(backdrop === 'mica' ? { ...options, backgroundMaterial: 'mica' } : options);
+  } catch {
+    // Mica refused: fall back to the solid window.
+    backdrop = 'solid';
+    win = new BrowserWindow({ ...options, backgroundColor: windowBackground({ backdrop, dark: nativeTheme.shouldUseDarkColors }) });
+  }
   win.once('ready-to-show', () => win.show());
+  // Zoom keys work in every build (the packaged app has no menu to carry them): WCAG 1.4.4.
+  win.webContents.on('before-input-event', (event, input) => {
+    const level = zoomFor(input, win.webContents.getZoomLevel());
+    if (level == null) return;
+    event.preventDefault();
+    win.webContents.setZoomLevel(level);
+  });
   if (smoke) smokeRun = attachSmoke(win, { exit: code => app.exit(code) });
+  if (scenes) scenesRun = attachScenes(win, { exit: code => app.exit(code), dir: scenes });
+  installCloseGuard(win);
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
   });
@@ -70,12 +135,44 @@ function createWindow() {
   return win;
 }
 
+/**
+ * Closing with unsaved changes: main asks the renderer, which answers 'close' (nothing to save) or 'wait'
+ * (it shows Save / Don't save / Cancel and calls uf.closeWindow() when the user decides). No answer within
+ * 5 s closes the window anyway, so a hung renderer can never keep it open.
+ */
+function installCloseGuard(win) {
+  // Smoke runs end with app.exit; scene runs keep the guard so the "Save changes?" path is captured too.
+  let allowClose = smoke;
+  let waiting = null;
+  win.on('close', event => {
+    if (allowClose || win.webContents.isCrashed()) return;
+    event.preventDefault();
+    if (waiting) return;
+    waiting = setTimeout(() => {
+      allowClose = true;
+      if (!win.isDestroyed()) win.close();
+    }, CLOSE_ANSWER_TIMEOUT_MS);
+    win.webContents.send('uf:close-request');
+  });
+  win.closeGuard = {
+    answer(kind) {
+      clearTimeout(waiting);
+      waiting = null;
+      if (kind === 'close') {
+        allowClose = true;
+        if (!win.isDestroyed()) win.close();
+      }
+    },
+  };
+}
+
 function buildMenu() {
   if (app.isPackaged) return null;
   return Menu.buildFromTemplate([
     {
       label: 'View',
-      submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }],
+      // Zoom keys are handled in before-input-event for every build, so they aren't repeated here.
+      submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }],
     },
   ]);
 }
@@ -95,8 +192,8 @@ function registerIpc() {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
     platform: process.platform,
+    backdrop,
   }));
-  handle('uf:manifest', () => readManifest());
   handle('uf:checkUpstream', async () => {
     let local = null;
     try {
@@ -110,10 +207,21 @@ function registerIpc() {
     await store.remove(String(id));
   });
   handle('uf:openExternal', url => openExternal(url));
+  handle('uf:closeAnswer', kind => {
+    mainWindow?.closeGuard?.answer(kind === 'close' ? 'close' : 'wait');
+  });
   handle('uf:smokeResult', result => {
     if (smokeRun) smokeRun.report(result);
   });
   handle('uf:smokeCapture', tag => (smokeRun ? smokeRun.capture(tag) : null));
+  handle('uf:smokeClick', (x, y) => (smokeRun ? smokeRun.click(x, y) : false));
+  handle('uf:sceneCapture', name => (scenesRun ? scenesRun.capture(String(name)) : null));
+  handle('uf:scenesDone', () => scenesRun?.done());
+  handle('uf:scenesFailed', error => scenesRun?.fail(String(error)));
+  // Scene mode only: close the window the way the caption button does, to capture the close guard.
+  handle('uf:sceneRequestClose', () => {
+    if (scenesRun && mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  });
 }
 
 /** Lock down every web contents: no navigation off app://local, no new windows, no webviews, no permissions. */
@@ -150,6 +258,7 @@ if (primary) {
 }
 
 function start() {
+  nativeTheme.themeSource = themeSourceFrom(process.env);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
   handleAppProtocol(protocol, appRoot());
@@ -157,4 +266,5 @@ function start() {
   registerIpc();
   Menu.setApplicationMenu(buildMenu());
   mainWindow = createWindow();
+  nativeTheme.on('updated', () => syncChrome(mainWindow));
 }

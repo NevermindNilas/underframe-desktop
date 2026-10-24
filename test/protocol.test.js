@@ -10,18 +10,21 @@ import {
 import { isAllowedExternal, checkUpstream } from '../src/main/external.js';
 
 test('routes map onto the shipped directories', () => {
-  assert.equal(resolveAppPath('/renderer/index.html'), 'src/renderer/index.html');
-  assert.equal(resolveAppPath('/renderer/ui/panel.js'), 'src/renderer/ui/panel.js');
-  assert.equal(resolveAppPath('/shared/mods.js'), 'src/shared/mods.js');
+  // The renderer is served from its Vite build, never from the sources.
+  assert.equal(resolveAppPath('/renderer/index.html'), 'build/renderer/index.html');
+  assert.equal(resolveAppPath('/renderer/assets/index-abc123.js'), 'build/renderer/assets/index-abc123.js');
+  assert.equal(resolveAppPath('/renderer/engine.worker.js'), 'build/renderer/engine.worker.js');
   assert.equal(resolveAppPath('/core/engine/dps_calculator.wasm'), 'core/engine/dps_calculator.wasm');
   assert.equal(resolveAppPath('/core/data/data.json'), 'core/data/data.json');
   assert.equal(resolveAppPath('/core/manifest.json'), 'core/manifest.json');
-  assert.equal(resolveAppPath('/renderer/my%20file.css'), 'src/renderer/my file.css');
+  assert.equal(resolveAppPath('/renderer/my%20file.css'), 'build/renderer/my file.css');
 });
 
 test('anything outside the routes is refused', () => {
   for (const p of ['/', '/renderer/', '/renderer', '/core/data/other.json', '/core/scripts/update.mjs', '/core/LICENSE',
-    '/src/main/main.js', '/package.json', '/main/main.js', '/core/', 'renderer/index.html', '']) {
+    '/src/main/main.js', '/package.json', '/main/main.js', '/core/', 'renderer/index.html', '',
+    // Sources are not served: shared logic is bundled into the renderer build.
+    '/shared/mods.js', '/src/renderer/index.html', '/build/renderer/index.html']) {
     assert.equal(resolveAppPath(p), null, p);
   }
 });
@@ -37,7 +40,7 @@ test('path traversal is refused, encoded or not', () => {
 test('only the engine worker gets eval rights', () => {
   assert.equal(cspFor('/renderer/engine.worker.js'), WORKER_CSP);
   assert.match(WORKER_CSP, /'unsafe-eval' 'wasm-unsafe-eval'/);
-  for (const p of ['/renderer/index.html', '/renderer/app.js', '/core/engine/dps_calculator.js']) {
+  for (const p of ['/renderer/index.html', '/renderer/assets/index.js', '/core/engine/dps_calculator.js']) {
     assert.equal(cspFor(p), PAGE_CSP, p);
   }
   assert.doesNotMatch(PAGE_CSP, /unsafe-eval/);
@@ -59,11 +62,14 @@ test('content types', () => {
 test('handler serves files with headers and 404s the rest', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'uf-proto-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(path.join(root, 'src', 'renderer'), { recursive: true });
+  await mkdir(path.join(root, 'build', 'renderer', 'assets'), { recursive: true });
   await mkdir(path.join(root, 'src', 'main'), { recursive: true });
-  await writeFile(path.join(root, 'src', 'renderer', 'index.html'), '<h1>hi</h1>');
-  await writeFile(path.join(root, 'src', 'renderer', 'engine.worker.js'), 'self.x = 1;');
+  await mkdir(path.join(root, 'src', 'renderer'), { recursive: true });
+  await writeFile(path.join(root, 'build', 'renderer', 'index.html'), '<h1>hi</h1>');
+  await writeFile(path.join(root, 'build', 'renderer', 'engine.worker.js'), 'self.x = 1;');
+  await writeFile(path.join(root, 'build', 'renderer', 'assets', 'index-1.js'), 'export {};');
   await writeFile(path.join(root, 'src', 'main', 'main.js'), 'secret');
+  await writeFile(path.join(root, 'src', 'renderer', 'index.html'), 'source page');
   const handler = createAppHandler({ root });
 
   const page = await handler(new Request('app://local/renderer/index.html'));
@@ -76,7 +82,13 @@ test('handler serves files with headers and 404s the rest', async t => {
   assert.equal(worker.status, 200);
   assert.equal(worker.headers.get('content-security-policy'), WORKER_CSP);
 
+  const bundle = await handler(new Request('app://local/renderer/assets/index-1.js'));
+  assert.equal(bundle.status, 200);
+  assert.match(bundle.headers.get('content-type'), /^text\/javascript/);
+  assert.equal(bundle.headers.get('content-security-policy'), PAGE_CSP);
+
   for (const url of ['app://local/renderer/missing.js', 'app://local/main/main.js', 'app://other/renderer/index.html',
+    'app://local/src/renderer/index.html', 'app://local/renderer/../src/renderer/index.html',
     'app://local/renderer/%2e%2e/main/main.js', 'app://local/renderer/..%2fmain%2fmain.js']) {
     const res = await handler(new Request(url));
     assert.equal(res.status, 404, url);

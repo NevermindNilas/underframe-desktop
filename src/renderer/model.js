@@ -3,6 +3,7 @@ import { FACTIONS, resolveFaction } from '../shared/factions.js';
 import { scaleEnemy } from '../shared/enemy.js';
 import { indexMods, isSupportedWeapon, isModCompatible, maxRank, conflictingMod } from '../shared/mods.js';
 import { selectableModes } from '../shared/stats.js';
+import { fmtCompact } from './format.js';
 
 export const SLOT_COUNT = 9;
 export const EXILUS_SLOT = 8;
@@ -122,10 +123,18 @@ export function updateEnemy(ctx, enemy, patch) {
   return withEnemyStats(ctx, next);
 }
 
+/**
+ * One-line target description for the result card and compare pins: everything the result depends on
+ * ("Elite Crewman · L145 · Steel Path · Corpus · Headshots", or the pools of a custom target).
+ */
 export function targetLabel(enemy) {
   if (!enemy) return '';
-  if (enemy.preset === CUSTOM_PRESET) return `Custom ${enemy.faction}`;
-  return `${enemy.preset} · L${enemy.level}${enemy.steelPath ? ' · SP' : ''}`;
+  const pools = enemy.preset === CUSTOM_PRESET
+    ? [`${fmtCompact(enemy.hp)} health`, `${fmtCompact(enemy.shields)} shields`, `${fmtCompact(enemy.armor)} armor`,
+      enemy.overguard ? `${fmtCompact(enemy.overguard)} overguard` : null]
+    : null;
+  const head = pools ? ['Custom target', ...pools] : [enemy.preset, `L${enemy.level}`, enemy.steelPath ? 'Steel Path' : null];
+  return [...head, enemy.faction, enemy.headshot ? 'Headshots' : null].filter(Boolean).join(' · ');
 }
 
 export function createBuild(ctx, overrides = {}) {
@@ -222,11 +231,21 @@ export function buildAfterSave(current, sent, saved) {
   return next;
 }
 
-/** The part of a build that counts as "content" for unsaved-changes detection. */
+/** The part of a build that counts as "content": unsaved-changes detection and undo steps. */
+export function contentOf(build) {
+  const { name, weaponName, modeName, mods, enemy, simTime, notes } = build;
+  return { name, weaponName, modeName, mods, enemy, simTime, notes };
+}
+
+/** Restore content (an undo step) into the working build, keeping its identity (id, save time). */
+export function withContent(build, content) {
+  const { lastResult: _stale, ...identity } = build;
+  return { ...identity, ...content };
+}
+
 export function snapshotOf(build) {
   if (!build) return '';
-  const { name, weaponName, modeName, mods, enemy, simTime, notes } = build;
-  return JSON.stringify({ name, weaponName, modeName, mods, enemy, simTime, notes });
+  return JSON.stringify(contentOf(build));
 }
 
 /** Everything the simulation result depends on. */
@@ -276,9 +295,11 @@ export function modCandidates(ctx, build, slot, query = '') {
     if (!isModCompatible(mod, weapon) || !fitsSlot(ctx, name, slot)) continue;
     if (q && !name.toLowerCase().includes(q) && !String(mod.Description ?? '').toLowerCase().includes(q)) continue;
     const c = conflictingMod(name, others, ctx.index);
+    const where = c === name ? others.indexOf(name) : -1;
     out.push({
       name, mod, popular: ctx.popular.has(name),
-      conflict: c ? (c === name ? 'Already equipped' : `Conflicts with ${c}`) : null,
+      conflict: c ? (c === name ? `Already in ${slotLabel(where).replace(/^Slot/, 'slot')}` : `Conflicts with ${c}`) : null,
+      equipped: build.mods[slot]?.name === name,
     });
   }
   const relevance = c => (!q ? 0 : c.name.toLowerCase().startsWith(q) ? 0 : c.name.toLowerCase().includes(q) ? 1 : 2);
@@ -328,6 +349,18 @@ export function buildFromFeatured(ctx, featured, enemy = null) {
   ];
   return { build, notes };
 }
+
+/** Mods equipped in a build, by name, for messages ("Hornet Strike, Lethal Torrent"). */
+export function equippedNames(build) {
+  return build.mods.filter(Boolean).map(s => s.name);
+}
+
+/** Incarnon fire modes run, but their evolution bonuses aren't simulated (UX spec 5.7: say so). */
+export const isIncarnonMode = modeName => /incarnon/i.test(String(modeName ?? ''));
+export const INCARNON_NOTE = "Incarnon evolutions aren't simulated.";
+
+/** "Slot 5" / "Exilus". */
+export const slotLabel = slot => (slot === EXILUS_SLOT ? 'Exilus' : `Slot ${slot + 1}`);
 
 /** "7.83s" -> 7.83, "> 20s" -> not killed. */
 export function parseTtk(raw) {
@@ -457,8 +490,9 @@ export function weaponMatches(ctx, query = '') {
   return groups;
 }
 
-/** A compare-tray entry for the current result. */
+/** A compare-tray entry for the current result. `config` keeps what it was made from, to explain differences. */
 export function makePin(build, summary, id) {
+  const { preset, level, steelPath, faction, headshot, hp, armor, shields, overguard } = build.enemy;
   return {
     id,
     buildName: build.name,
@@ -468,19 +502,119 @@ export function makePin(build, summary, id) {
     avgDps: summary.avgDps,
     ttk: summary.ttk,
     ttkText: ttkText(summary),
+    config: {
+      weaponName: build.weaponName,
+      modeName: build.modeName,
+      mods: build.mods.map(m => (m ? { name: m.name, rank: m.rank } : null)),
+      enemy: { preset, level, steelPath: Boolean(steelPath), faction, headshot: Boolean(headshot), hp, armor, shields, overguard },
+      simTime: build.simTime,
+    },
   };
 }
 
-/** Compare rows with the DPS change relative to the first pin. */
-export function compareRows(pins) {
-  const base = pins[0]?.avgDps;
-  return pins.map((p, i) => ({ ...p, delta: i === 0 || !base ? null : (p.avgDps - base) / base }));
+/**
+ * What differs between a pin and the baseline pin, in words ("Serration R10→R0", "+Hellfire R5",
+ * "Steel Path on"). Empty when nothing differs; null when either pin predates `config`.
+ */
+export function pinChanges(pin, baseline) {
+  const a = baseline?.config;
+  const b = pin?.config;
+  if (!a || !b) return null;
+  const out = [];
+  if (a.weaponName !== b.weaponName) out.push(b.weaponName);
+  if (a.modeName !== b.modeName) out.push(b.modeName);
+  const ranks = list => new Map(list.filter(Boolean).map(m => [m.name, m.rank]));
+  const before = ranks(a.mods ?? []);
+  const after = ranks(b.mods ?? []);
+  for (const [name, rank] of after) {
+    if (!before.has(name)) out.push(`+${name} R${rank}`);
+    else if (before.get(name) !== rank) out.push(`${name} R${before.get(name)}→R${rank}`);
+  }
+  for (const [name] of before) if (!after.has(name)) out.push(`−${name}`);
+  const ea = a.enemy ?? {};
+  const eb = b.enemy ?? {};
+  if (ea.preset !== eb.preset) out.push(eb.preset === CUSTOM_PRESET ? 'Custom target' : eb.preset);
+  else if (eb.preset === CUSTOM_PRESET) {
+    for (const [k, label] of [['hp', 'health'], ['shields', 'shields'], ['armor', 'armor'], ['overguard', 'overguard']]) {
+      if (ea[k] !== eb[k]) out.push(`${fmtCompact(eb[k])} ${label}`);
+    }
+  }
+  if (eb.preset !== CUSTOM_PRESET && ea.level !== eb.level) out.push(`Level ${ea.level}→${eb.level}`);
+  if (Boolean(ea.steelPath) !== Boolean(eb.steelPath)) out.push(`Steel Path ${eb.steelPath ? 'on' : 'off'}`);
+  if (ea.faction !== eb.faction) out.push(eb.faction);
+  if (Boolean(ea.headshot) !== Boolean(eb.headshot)) out.push(`Headshots ${eb.headshot ? 'on' : 'off'}`);
+  if (a.simTime !== b.simTime) out.push(`${b.simTime} s`);
+  return out;
+}
+
+/** Undo of "Clear all": the cleared pins come back first, pins added since stay after them (newest kept). */
+export function mergePins(cleared, current, max = MAX_PINS) {
+  const ids = new Set(cleared.map(p => p.id));
+  return [...cleared, ...current.filter(p => !ids.has(p.id))].slice(-max);
+}
+
+/** Compare rows with the DPS change relative to the baseline pin (the first pin unless another is chosen). */
+export function compareRows(pins, baselineId = null) {
+  const baseline = pins.find(p => p.id === baselineId) ?? pins[0];
+  const base = baseline?.avgDps;
+  return pins.map(p => {
+    const changes = p === baseline ? [] : pinChanges(p, baseline);
+    return {
+      ...p,
+      baseline: p === baseline,
+      delta: p === baseline || !base ? null : (p.avgDps - base) / base,
+      changes,
+      changesText: p === baseline ? '—' : changes == null ? '—' : changes.length ? changes.join(', ') : 'Same setup',
+    };
+  });
+}
+
+export const MAX_PINS = 20;
+
+/** Add a pin, dropping the oldest beyond MAX_PINS. Returns { pins, dropped } (dropped: pins removed). */
+export function addPin(pins, pin, max = MAX_PINS) {
+  const all = [...pins, pin];
+  const dropped = all.length > max ? all.slice(0, all.length - max) : [];
+  return { pins: all.slice(-max), dropped };
+}
+
+/** The signed change from a previous result, or null when there is none or it is under 0.05%. */
+export function resultDelta(current, previous) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous <= 0) return null;
+  const delta = (current - previous) / previous;
+  return Math.abs(delta) < 0.0005 ? null : delta;
 }
 
 /** Validate pins read back from localStorage. */
 export function sanitizePins(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.filter(p => p && typeof p.id === 'string' && Number.isFinite(p.avgDps)).slice(0, 20);
+}
+
+/** What a best-mod search depends on: the build with the searched slot emptied. */
+export function sweepKeyOf(ctx, build, slot) {
+  return simKeyOf(ctx, setSlot(build, slot, null));
+}
+
+/**
+ * What the Best mod tab shows for a search, given the mod now in the searched slot (`slotNow`, or null).
+ * Every candidate was measured at max rank with the same 3 seeds, so they compare directly:
+ * - with a tested mod in the slot, gains are against that mod's own measurement (`base.kind === 'mod'`);
+ * - otherwise against the slot left empty (`base.kind === 'empty'`).
+ * Rows: the top `limit`, plus the mod in the slot (with its place) when it ranks lower.
+ */
+export function sweepView(sweep, slotNow, limit = 10) {
+  const all = sweep?.all ?? [];
+  const current = slotNow ? all.find(r => r.name === slotNow) : null;
+  const base = current && Number.isFinite(current.dps)
+    ? { kind: 'mod', name: current.name, dps: current.dps, rank: current.rank }
+    : { kind: 'empty', name: null, dps: sweep?.baseDps ?? null };
+  const gainOf = dps => (base.dps > 0 && Number.isFinite(dps) ? (dps - base.dps) / base.dps : null);
+  const ranked = all.map((r, i) => ({ ...r, place: i + 1, gain: gainOf(r.dps), equipped: r.name === slotNow }));
+  const rows = ranked.slice(0, limit);
+  const mine = ranked.find(r => r.equipped);
+  if (mine && mine.place > limit) rows.push(mine);
+  return { base, rows };
 }
 
 /** Rank sweep results by DPS gain over the baseline. */
@@ -490,4 +624,24 @@ export function rankSweep(results, baseDps, limit = 10) {
     .map(r => ({ ...r, gain: baseDps > 0 ? (r.dps - baseDps) / baseDps : 0 }))
     .sort((a, b) => b.dps - a.dps)
     .slice(0, limit);
+}
+
+export const LIBRARY_SORTS = { recent: 'Recent', name: 'Name', dps: 'Average DPS' };
+
+/** Saved builds in library order: most recent first, by name, or by saved Average DPS (builds without one last). */
+export function sortBuilds(list, sort = 'recent') {
+  const out = [...list];
+  if (sort === 'name') return out.sort((a, b) => String(a.name).localeCompare(String(b.name)) || String(a.id).localeCompare(String(b.id)));
+  if (sort === 'dps') {
+    const dps = b => (Number.isFinite(b.lastResult?.avgDps) ? b.lastResult.avgDps : -Infinity);
+    return out.sort((a, b) => dps(b) - dps(a) || String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')));
+  }
+  return out.sort((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')));
+}
+
+/** Library search: name, weapon and tags, case-insensitive. */
+export function matchesBuildQuery(item, query) {
+  const q = String(query ?? '').trim().toLowerCase();
+  if (!q) return true;
+  return [item.name, item.weaponName, ...(item.tags ?? [])].some(v => String(v ?? '').toLowerCase().includes(q));
 }

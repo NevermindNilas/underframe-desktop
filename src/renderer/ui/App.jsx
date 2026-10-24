@@ -1,0 +1,107 @@
+// Root: Fluent theme, window shell (title bar, library pane, workspace, status bar), global shortcuts.
+import { useEffect, useMemo } from 'react';
+import { AriaLiveAnnouncer, FluentProvider, makeStyles } from '@fluentui/react-components';
+import { makeTheme, layerVariables, shellBackground } from '../theme.js';
+import { useApp, useMediaQuery, useWindowSize, layoutFor } from '../hooks.js';
+import { store, isDirty } from '../controller.js';
+import { uf } from '../platform.js';
+import { buildToSave } from '../model.js';
+import { TitleBar } from './TitleBar.jsx';
+import { LibraryPane } from './LibraryPane.jsx';
+import { Workspace } from './Workspace.jsx';
+import { StatusBar } from './StatusBar.jsx';
+import { Toasts } from './Toasts.jsx';
+import { ModPicker } from './ModPicker.jsx';
+import { Dialogs } from './Dialogs.jsx';
+import { Announcer } from './Announcer.jsx';
+import { useShortcuts } from './shortcuts.js';
+
+const useStyles = makeStyles({
+  // FluentProvider copies its className onto every portal mount node (tooltips, menus, toasts), so it must
+  // carry no layout: a full-height portal node at z-index 1000000 would swallow every mouse click.
+  // The shell sizes itself with 100vh instead.
+  provider: {
+    backgroundColor: 'transparent',
+  },
+  shell: {
+    display: 'grid',
+    gridTemplateRows: '48px minmax(0, 1fr) 28px',
+    height: '100vh',
+    overflow: 'hidden',
+  },
+  main: {
+    display: 'flex',
+    minHeight: 0,
+    minWidth: 0,
+    position: 'relative',
+  },
+});
+
+export function App() {
+  const dark = useMediaQuery('(prefers-color-scheme: dark)');
+  const backdrop = uf.backdrop === 'mica' ? 'mica' : 'solid';
+  const theme = useMemo(() => makeTheme({ dark, backdrop }), [dark, backdrop]);
+  const vars = useMemo(() => layerVariables({ dark, backdrop }), [dark, backdrop]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = dark ? 'dark' : 'light';
+    root.dataset.backdrop = backdrop;
+    root.style.background = shellBackground({ dark, backdrop });
+    document.body.style.background = 'transparent';
+  }, [dark, backdrop]);
+
+  return (
+    <FluentProvider theme={theme} style={vars} className={useStyles().provider}>
+      {/* AriaLiveAnnouncer provides useAnnounce() (the Announcer's completed-result message). */}
+      <AriaLiveAnnouncer>
+        <Shell />
+      </AriaLiveAnnouncer>
+    </FluentProvider>
+  );
+}
+
+function useDocumentTitle() {
+  const build = useApp(s => s.build);
+  const snapshot = useApp(s => s.snapshot);
+  useEffect(() => {
+    if (!build) {
+      document.title = 'Underframe Desktop';
+      return;
+    }
+    const dirty = isDirty(store.get());
+    document.title = `${dirty ? '• ' : ''}${buildToSave(build).name} - Underframe Desktop`;
+  }, [build, snapshot]);
+}
+
+function Shell() {
+  const styles = useStyles();
+  const { width, height } = useWindowSize();
+  const layout = layoutFor(width, height);
+  const libraryOpenPref = useApp(s => s.ui.libraryOpen);
+  const overlayOpen = useApp(s => s.overlayLibraryOpen ?? false);
+  const libraryOpen = layout.library === 'inline' ? libraryOpenPref ?? true : overlayOpen;
+
+  useEffect(() => {
+    store.set({ libraryMode: layout.library });
+  }, [layout.library]);
+
+  useDocumentTitle();
+  useShortcuts();
+
+  return (
+    <div className={styles.shell}>
+      <TitleBar libraryOpen={libraryOpen} />
+      <div className={styles.main}>
+        <LibraryPane layout={layout} open={libraryOpen} />
+        <Workspace layout={layout} />
+      </div>
+      <StatusBar />
+      <Toasts />
+      <ModPicker />
+      <Dialogs />
+      <Announcer />
+    </div>
+  );
+}
+
