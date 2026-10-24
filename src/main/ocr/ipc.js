@@ -2,10 +2,11 @@
 // is not our own app:// page. Every call resolves to a result or to { error: { code, message } } for the UI to
 // show; they never reject with a bare Error, so the message survives the IPC boundary.
 
-import { clipboard, shell } from 'electron';
+import { clipboard, nativeImage, shell } from 'electron';
 import { MAX_IMAGE_BYTES, sniffImageType, toBuffer } from './preprocess.js';
 import { recognizeScreenshot } from './index.js';
 import { captureGameWindow } from './capture-game.js';
+import { readClipboardImage } from './clipboard.js';
 
 const failure = e => ({ error: { code: e?.code ?? 'ocr-failed', message: String(e?.message ?? e ?? 'Screenshot recognition failed.') } });
 
@@ -41,17 +42,12 @@ export function registerOcrIpc(handle) {
       return failure(e);
     }
   });
-  // The clipboard's image as { png, width, height, hasText }, or { error: { code: 'no-image' } }. Read only on the
-  // user's explicit paste command (Ctrl+V or the menu item).
-  handle('uf:ocr:clipboardImage', () => {
+  // Read only on the user's explicit paste command (Ctrl+V or the menu item).
+  handle('uf:ocr:clipboardImage', async () => {
     try {
-      const img = clipboard.readImage();
-      const hasText = Boolean(clipboard.readText());
-      if (!img || img.isEmpty()) return { error: { code: 'no-image', message: "There's no image on the clipboard." }, hasText };
-      const { width, height } = img.getSize();
-      return { png: new Uint8Array(img.toPNG()), width, height, hasText };
+      return await readClipboardImage(clipboard, buf => nativeImage.createFromBuffer(buf));
     } catch (e) {
-      return failure(e);
+      return { ...failure(e), error: { code: 'clipboard-failed', message: `Couldn't read the clipboard: ${e?.message ?? e}` } };
     }
   });
   // Settings > Time & language > Language, where the English (United States) OCR language is added.

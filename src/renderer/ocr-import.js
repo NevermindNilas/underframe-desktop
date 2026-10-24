@@ -224,7 +224,11 @@ export async function importFromClipboard({ fromShortcut = false } = {}) {
   if (!r || r.error) {
     // A shortcut with text on the clipboard is a normal paste somewhere else; say nothing.
     if (fromShortcut && r?.hasText) return false;
-    notify({ intent: 'info', title: "There's no image on the clipboard.", body: 'Copy a screenshot first (Win+Shift+S).' });
+    if (r?.error?.code === 'no-image') {
+      notify({ intent: 'info', title: "There's no image on the clipboard.", body: 'Copy a screenshot first (Win+Shift+S).' });
+    } else {
+      notify({ intent: 'error', title: "Couldn't paste the screenshot.", body: r?.error?.message ?? 'The clipboard could not be read.' });
+    }
     return false;
   }
   importFromBlob(new Blob([r.png], { type: 'image/png' }), 'paste');
