@@ -10,6 +10,7 @@ import { ORIGIN, handleAppProtocol, isAppUrl, registerAppScheme } from './protoc
 import { createBuildsStore } from './builds-store.js';
 import { createBuffPresetsStore } from './buff-presets-store.js';
 import { createAutoBuildStore } from './auto-build-store.js';
+import { createRivensStore } from './rivens-store.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
 import { SCENES_ARG, attachScenes, scenesDir } from './scenes.js';
@@ -42,6 +43,7 @@ let scenesRun = null;
 let store = null;
 let buffPresets = null;
 let autoBuild = null;
+let rivens = null;
 let backdrop = 'solid';
 
 const appRoot = () => app.getAppPath();
@@ -225,6 +227,9 @@ function registerIpc() {
   // Auto Build's configs and settings (one document per user): get() resolves to it or null, set(doc) to what was stored.
   handle('uf:autoBuild:get', () => autoBuild.get());
   handle('uf:autoBuild:set', doc => autoBuild.set(doc));
+  // The riven library (one per user): get() and set(library), both resolve to the stored { version, rivens }.
+  handle('uf:rivens:get', () => rivens.get());
+  handle('uf:rivens:set', library => rivens.set(library));
   handle('uf:openExternal', url => openExternal(url));
   // Screenshot recognition: 'uf:ocr:recognize' and 'uf:ocr:captureGame'.
   registerOcrIpc(handle);
@@ -292,6 +297,7 @@ function start() {
   store = createBuildsStore(app.getPath('userData'));
   buffPresets = createBuffPresetsStore(app.getPath('userData'));
   autoBuild = createAutoBuildStore(app.getPath('userData'));
+  rivens = createRivensStore(app.getPath('userData'));
   registerIpc();
   Menu.setApplicationMenu(buildMenu());
   mainWindow = createWindow();

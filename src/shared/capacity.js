@@ -5,6 +5,7 @@
 // - a mismatched one adds a quarter, rounded (14 -> 18);
 // - an Omni slot (or an Omni mod) matches everything except Umbra;
 // - an unpolarised slot, or a mod without polarity, changes nothing.
+import { RIVEN_CAPACITY_MOD } from './rivens.js';
 
 /** Polarity codes a slot can be given with Forma, in menu order. AP_UNIVERSAL is "no polarity". */
 export const SLOT_POLARITIES = Object.freeze(['AP_UNIVERSAL', 'AP_ATTACK', 'AP_DEFENSE', 'AP_TACTIC', 'AP_POWER', 'AP_WARD', 'AP_PRECEPT', 'AP_UMBRA', 'AP_ANY']);
@@ -110,7 +111,7 @@ export function formaCount(innate, overrides) {
 export function capacityUse(slots, polarities, modByName) {
   const perSlot = (slots ?? []).map((s, i) => {
     if (!s) return null;
-    const mod = modByName(s.name);
+    const mod = s.isRiven ? RIVEN_CAPACITY_MOD : modByName(s.name);
     return mod ? slotDrain(mod, s.rank, polarities?.[i]) : null;
   });
   return { used: perSlot.reduce((n, d) => n + (d?.drain ?? 0), 0), perSlot };

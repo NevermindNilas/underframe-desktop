@@ -4,6 +4,7 @@
 const STORE_KEY = 'uf.dev.builds';
 const PRESETS_KEY = 'uf.dev.buffPresets';
 const AUTO_BUILD_KEY = 'uf.dev.autoBuild';
+const RIVENS_KEY = 'uf.dev.rivens';
 
 function readDevBuilds() {
   try {
@@ -39,6 +40,15 @@ const fallback = {
     },
     set: async library => {
       try { localStorage.setItem(PRESETS_KEY, JSON.stringify(library)); } catch { /* storage unavailable */ }
+      return library;
+    },
+  },
+  rivens: {
+    get: async () => {
+      try { return JSON.parse(localStorage.getItem(RIVENS_KEY) ?? 'null') ?? { version: 1, rivens: [] }; } catch { return { version: 1, rivens: [] }; }
+    },
+    set: async library => {
+      try { localStorage.setItem(RIVENS_KEY, JSON.stringify(library)); } catch { /* storage unavailable */ }
       return library;
     },
   },

@@ -1,6 +1,8 @@
 // Assemble the JSON document `calculate_dps_wasm` expects.
 import { arcaneConditionalStats } from './arcanes.js';
-import { externalConditionalStats, mergeConditionalStats, strippedArmor } from './external-buffs.js';
+import { externalConditionalStats, mergeConditionalStats, mergeExternalTotals, strippedArmor } from './external-buffs.js';
+import { rivenForEngine } from './rivens.js';
+import { isCombinedMode, modeLabel } from './fire-modes.js';
 
 /**
  * The large, rarely-changing part of the input. Sent once via cache_app_state and referenced by id.
@@ -23,6 +25,25 @@ export function buildAppState(data, weapon, { externalStatuses = [] } = {}) {
 }
 
 /**
+ * Whether the run counts magazines and reloads, as underframe.site decides it: on with reload data, off with Infinite
+ * Ammo or when any mode of the weapon costs no ammo (Penta's fire patch); a mode that must count them (a whole-clip
+ * shot, a fixed fire rate) turns it back on for the selected mode and the modes that fire with it.
+ */
+export function useAccurateAmmo(weapon, weaponStats, modeName, reload, external = null, customFireModes = []) {
+  const on = Boolean(reload) && !external?.infiniteAmmo && !weaponStats.some(m => m.disablesAccurateAmmo);
+  const leaves = new Set(modesFiredBy(weapon, modeName, customFireModes));
+  return on || weaponStats.some(m => leaves.has(m.mode_name) && m.forceAccurateAmmo === true);
+}
+
+/** The modes a pick fires: a combined mode's parts ("custom:<name>"), or the mode and its child modes. */
+function modesFiredBy(weapon, modeName, customFireModes) {
+  const cm = isCombinedMode(modeName) ? (customFireModes ?? []).find(c => c.name === modeLabel(modeName)) : null;
+  if (cm) return cm.components.map(c => c.mode_name);
+  const selected = (weapon.fire_modes ?? []).find(m => m.mode_name === modeName);
+  return [modeName, ...[selected?.child_mode ?? []].flat()];
+}
+
+/**
  * @param {object} p
  * @param {object} p.weapon        weapon entry from data.weapons
  * @param {Array}  p.modSlots      [{name, rank}] in slot order (nulls allowed)
@@ -39,8 +60,11 @@ export function buildAppState(data, weapon, { externalStatuses = [] } = {}) {
  *   `enemy.armorStripImmune`). External statuses are not here: they live in the app state.
  * @param {Array|null} [p.externalStatuses] the target's statuses, only to tell whether they meet an arcane's element
  *   need (a Cold status for Primary Frostbite), the same list passed to computeWeaponStats().
+ * @param {object|null} [p.conditionals] resolveModConditionals() output; the same one passed to computeWeaponStats().
+ *   Its totals join the external buffs' conditionalStats, as underframe.site sends them.
  */
-export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null, external = null, externalStatuses = null }) {
+export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null, external: ownExternal = null, externalStatuses = null, conditionals = null, customFireModes = [] }) {
+  const external = mergeExternalTotals(ownExternal, conditionals?.totals ?? null);
   const input = {
     weaponStats,
     enemyConfig: {
@@ -65,9 +89,12 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
     build: {
       itemName: weapon.name,
       type: weapon.type,
-      mods: modSlots.filter(Boolean).map(s => ({ name: s.name, rank: s.rank })),
+      // A riven goes in scaled: the engine reads its Damage, Status Damage and elements for DoT (docs/port-rivens.md 3.1).
+      mods: modSlots.filter(Boolean).map(s => (s.isRiven ? rivenForEngine(s) : { name: s.name, rank: s.rank })),
       // Names only: the engine rejects objects here. It applies a few arcanes by name (Deadhead, Cryogenic, ...).
       arcanes: arcanes?.engineNames ? [...arcanes.engineNames] : [],
+      // The weapon's combined modes (data.custom_fire_modes); a "custom:<name>" pick runs one of them.
+      customFireModes: customFireModes ?? [],
     },
     simulationParams: {
       maxTime,
@@ -75,7 +102,7 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       selectedStanceCombo: '',
       // Simulate magazines and reloads (underframe.site's default); off fires forever without reloading.
       // Weapons with no reload row would otherwise get a placeholder 1-round magazine and reload after every shot.
-      useAccurateAmmo: Boolean(reload),
+      useAccurateAmmo: useAccurateAmmo(weapon, weaponStats, modeName, reload, external, customFireModes),
       initialCombo: 0,
       armorStripPerHit: 0,
       generateDebugLog: debugLog,
@@ -84,7 +111,9 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
   };
   if (arcanes?.startingStacks != null) input.simulationParams.secondaryEnervateStartingStacks = arcanes.startingStacks;
   // Arcane effects the engine reads from conditionalStats (DoT damage, Encumber, Sharpshot, ...), for the simulated mode.
-  const mode = weaponStats.find(m => m.mode_name === modeName) ?? weaponStats[0];
+  // A combined mode's first part stands for it.
+  const fired = modesFiredBy(weapon, modeName, customFireModes);
+  const mode = weaponStats.find(m => m.mode_name === modeName) ?? weaponStats.find(m => m.mode_name === fired[0]) ?? weaponStats[0];
   // External buffs' engine fields (procs, vulnerabilities, Sonar, ...) and their stat buckets (DoT damage) join them.
   const conditionalStats = mergeConditionalStats(
     arcanes ? arcaneConditionalStats(arcanes, mode?.finalDamageTypes, externalStatuses) : null,

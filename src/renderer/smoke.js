@@ -410,6 +410,60 @@ async function checkArcane(app, errors, checks) {
 }
 
 /**
+ * Conditional mod stacks: Galvanized Scope in slot 7 starts at max stacks ("×5"); a real click on the chip opens its
+ * popover, 0 stacks lowers the DPS and the chip says "×0"; Esc closes it; the slot menu's Stacks… opens it again.
+ * The slot is cleared afterwards.
+ */
+async function checkModStacks(app, errors, checks) {
+  const { store, actions, uf } = app;
+  const slot = 6;
+  const current = () => {
+    const s = store.get();
+    return s.sim.status === 'done' && s.sim.key === app.simKey() && s.sim.summary?.ok ? s.sim.summary.avgDps : null;
+  };
+  if (!actions.equipMod(slot, 'Galvanized Scope', 10, { focus: false, quiet: true })) { errors.push('stacks: Galvanized Scope could not be equipped'); return; }
+  await actions.runNow();
+  const full = await waitFor(current, 15000);
+  const chip = await waitFor(() => $(`[data-testid="slot-stacks-${slot}"]`), 2000);
+  checks.stacksChip = chip?.textContent ?? null;
+  if (chip?.textContent !== '×5') errors.push(`stacks: the chip reads "${chip?.textContent ?? 'nothing'}", expected "×5"`);
+  if (!(await realClick(app, chip, errors, 'stacks chip'))) return;
+  const popover = await waitFor(() => $('[data-testid="mod-stacks-popover"]'), 2000);
+  if (!popover) { errors.push('stacks: a real click on the chip did not open its popover'); return; }
+  const input = popover.querySelector('input');
+  if (!(await waitFor(() => popover.contains(document.activeElement), 1500))) errors.push(`stacks: focus did not move into the popover (${testIdOfFocus()})`);
+  await sleep(250);
+  await capture(uf, 'mod-stacks', errors);
+  input?.focus();
+  input?.select();
+  typeInto(input, '0');
+  await uf.smokePress('Enter');
+  if (!(await waitFor(() => store.get().build.mods[slot]?.stacks === 0, 2000))) errors.push(`stacks: typing 0 left the slot at ${JSON.stringify(store.get().build.mods[slot])}`);
+  await actions.runNow();
+  const none = await waitFor(current, 15000);
+  checks.stacksDps = full && none ? `${Math.round(full)} at 5 stacks, ${Math.round(none)} at 0` : null;
+  if (!(none < full)) errors.push(`stacks: 0 stacks did not lower the DPS (${full} -> ${none})`);
+  if ($(`[data-testid="slot-stacks-${slot}"]`)?.textContent !== '×0') errors.push(`stacks: the chip reads "${$(`[data-testid="slot-stacks-${slot}"]`)?.textContent}" at 0 stacks`);
+  await uf.smokePress('Escape');
+  if (!(await waitFor(() => !$('[data-testid="mod-stacks-popover"]'), 1500))) errors.push('stacks: Esc did not close the popover');
+  // The keyboard route: the slot menu (Shift+F10) has Stacks….
+  $(`[data-testid="slot-select-${slot}"]`)?.focus();
+  await uf.smokePress('F10', ['shift']);
+  const item = await waitFor(() => $$('[role="menuitem"]').find(m => /^Stacks \(0 stacks\)/.test(m.textContent)), 2000);
+  if (!item) errors.push('stacks: the slot menu has no "Stacks (0 stacks)…" item');
+  else {
+    item.focus();
+    await uf.smokePress('Enter');
+    if (!(await waitFor(() => $('[data-testid="mod-stacks-popover"]'), 2000))) errors.push('stacks: Stacks… in the slot menu did not open the popover');
+    await uf.smokePress('Escape');
+    await waitFor(() => !$('[data-testid="mod-stacks-popover"]'), 1500);
+  }
+  actions.clearSlot(slot, { focus: false });
+  await actions.runNow();
+  log(`stacks: ${checks.stacksDps}`);
+}
+
+/**
  * Keyboard flow: Ctrl+6 opens the Picker for slot 6 with focus in the search, Enter equips the first result, Del
  * removes, Ctrl+Z / Ctrl+Y undo and redo, the stats grid roves and searches, Ctrl+T and Ctrl+J open the target and
  * Compare, F6 cycles the panes.
@@ -978,6 +1032,71 @@ async function checkFeatured(app, errors, checks) {
   log(`featured list shows ${checks.featured} builds`);
 }
 
+/**
+ * Weapon options on a Progenitor weapon: Kuva Bramma shows "Options" (Braton Prime has none); a real click opens the
+ * popover with the default Magnetic 25%; picking Heat from the element dropdown with real clicks changes the bonus and
+ * the DPS; Esc closes it. The weapon goes back to Braton Prime with its mods afterwards.
+ */
+async function checkWeaponOptions(app, errors, checks) {
+  const { store, actions, uf } = app;
+  if ($('[data-testid="weapon-options"]')) errors.push('options: Braton Prime shows weapon options it does not have');
+  const before = store.get().build;
+  // The featured check leaves the library drawer open; it covers the Loadout.
+  actions.setLibraryOpen(false);
+  await waitFor(() => !$('.fui-OverlayDrawer'), 2000);
+  actions.setWeapon('Kuva Bramma');
+  const button = await waitFor(() => $('[data-testid="weapon-options"]'), 3000);
+  if (!button) { errors.push('options: no Options button on Kuva Bramma'); return; }
+  checks.weaponOptionsLabel = button.getAttribute('aria-label');
+  if (!/Magnetic 25%/.test(checks.weaponOptionsLabel ?? '')) errors.push(`options: the button says "${checks.weaponOptionsLabel}", expected the default Magnetic 25%`);
+  if (!(await realClick(app, button, errors, 'Options button'))) return;
+  const popover = await waitFor(() => $('[data-testid="weapon-options-popover"]'), 2000);
+  if (!popover) { errors.push('options: a real click on Options did not open the popover'); return; }
+  await capture(uf, 'weapon-options', errors);
+  if (!(await realClick(app, $('[data-testid="progenitor-element"]'), errors, 'Progenitor element dropdown'))) return;
+  const heat = await waitFor(() => $$('[role="option"]').find(o => o.textContent.trim() === 'Heat'), 2000);
+  if (!heat) { errors.push('options: the element list has no Heat'); return; }
+  await realClick(app, heat, errors, 'Heat option');
+  if (!(await waitFor(() => store.get().build.progenitor?.element === 'Heat', 2000))) errors.push(`options: picking Heat left the bonus at ${JSON.stringify(store.get().build.progenitor)}`);
+  await uf.smokePress('Escape');
+  await uf.smokePress('Escape');
+  if (!(await waitFor(() => !$('[data-testid="weapon-options-popover"]'), 1500))) errors.push('options: Esc did not close the popover');
+  checks.weaponOptions = store.get().build.progenitor;
+  // Undo back to the build as it was (the weapon change dropped mods that don't fit a bow).
+  const target = JSON.stringify(before.mods);
+  for (let i = 0; i < 5 && (store.get().build.weaponName !== before.weaponName || JSON.stringify(store.get().build.mods) !== target); i++) actions.undo();
+  if (store.get().build.weaponName !== before.weaponName) errors.push('options: undo did not bring the weapon back');
+  await waitFor(() => !$('[data-testid="weapon-options"]'), 2000);
+  log(`weapon options: ${JSON.stringify(checks.weaponOptions)}`);
+}
+
+/**
+ * Rivens: picking for an empty general slot, the Picker's "Riven" menu (real clicks) opens "New riven…", the riven
+ * dialog opens with focus inside, its layout passes the dialog checks, and Esc closes it.
+ */
+async function checkRiven(app, errors, checks) {
+  const { store, actions, uf } = app;
+  const slot = store.get().build.mods.findIndex((m, i) => !m && i < 8);
+  if (slot < 0) { errors.push('riven: no empty general slot'); return; }
+  actions.selectSlot(slot);
+  const button = await waitFor(() => $('[data-testid="picker-rivens"]'), 2000);
+  if (!button) { errors.push('riven: no Riven button in the Picker while picking a general slot'); return; }
+  if (!(await realClick(app, button, errors, 'Picker Riven button'))) return;
+  const item = await waitFor(() => $('[data-testid="picker-riven-new"]'), 2000);
+  if (!item) { errors.push('riven: the Riven menu has no "New riven…"'); return; }
+  await realClick(app, item, errors, 'New riven');
+  const dialog = await waitFor(() => $('[data-testid="riven-dialog"]'), 2000);
+  if (!dialog) { errors.push('riven: "New riven…" did not open the riven dialog'); return; }
+  if (!(await waitFor(() => dialog.contains(document.activeElement), 1500))) errors.push(`riven: the dialog opened with focus on ${testIdOfFocus()}`);
+  await checkDialogLayout(dialog, 'riven', errors, checks);
+  await capture(uf, 'riven-dialog', errors);
+  await uf.smokePress('Escape');
+  if (!(await waitFor(() => !$('[data-testid="riven-dialog"]'), 2000))) errors.push('riven: Esc did not close the dialog');
+  actions.closePicker?.({ focusSlot: slot });
+  checks.riven = true;
+  log('riven dialog opens and closes');
+}
+
 export async function runSmoke(app, { t0 }) {
   const { actions, store, uf, timings } = app;
   const errors = [];
@@ -1065,6 +1184,7 @@ export async function runSmoke(app, { t0 }) {
 
     await checkPicker(app, errors, checks);
     await checkArcane(app, errors, checks);
+    await checkModStacks(app, errors, checks);
     await checkKeyboard(app, errors, checks);
     await checkCompare(app, errors, checks);
     await checkBuffs(app, errors, checks);
@@ -1072,6 +1192,8 @@ export async function runSmoke(app, { t0 }) {
     await checkSaveRemove(app, errors, checks);
     await checkOcr(app, errors, checks);
     await checkFeatured(app, errors, checks);
+    await checkWeaponOptions(app, errors, checks);
+    await checkRiven(app, errors, checks);
     // Clear toasts so the final screenshot shows the app itself.
     clearToasts();
     await sleep(500);

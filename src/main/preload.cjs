@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('uf', {
     get: () => call('uf:buffPresets:get'),
     set: library => call('uf:buffPresets:set', library),
   },
+  // The riven library: { version: 1, rivens: [riven] }, one library per user (docs/port-rivens.md).
+  rivens: {
+    get: () => call('uf:rivens:get'),
+    set: library => call('uf:rivens:set', library),
+  },
   // Auto Build configs: { version, activeConfigId, configs: [{ id, name, settings }], cores }, or null before the first save.
   autoBuild: {
     get: () => call('uf:autoBuild:get'),

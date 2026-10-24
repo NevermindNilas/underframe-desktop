@@ -270,7 +270,7 @@ test('Cost Control: the plan lists the Forma it needs, and the build\'s own Form
   assert.ok(p10 === null || p10.added <= 2, 'with 10 allowed, at most 2 more');
 });
 
-test('nothing to fill: every slot kept and the arcane kept; conditional mods are named for the honesty line', { skip }, () => {
+test('nothing to fill: every slot kept and the arcane kept; conditional mods are named with their stacks', { skip }, () => {
   const { ctx, data } = real();
   const weapon = ctx.weaponByName.get('Braton Prime');
   const mods = [...['Serration', 'Point Strike', 'Vital Sense', 'Hellfire', 'Infected Clip', 'Stormbringer', 'Split Chamber', 'Galvanized Chamber'].map(n => ({ name: n, rank: 5 })), null];
@@ -279,7 +279,9 @@ test('nothing to fill: every slot kept and the arcane kept; conditional mods are
   assert.equal(AB.nothingToFill({ mods, arcanes: [{ name: 'Primary Merciless' }] }, weapon, all, false), false, 'the arcane may be replaced');
   assert.equal(AB.nothingToFill({ mods, arcanes: [null] }, weapon, all, true), false, 'an empty arcane slot can be filled');
   assert.equal(AB.nothingToFill({ mods, arcanes: [{ name: 'Primary Merciless' }] }, weapon, new Set([0, 1]), true), false);
-  assert.deepEqual(AB.conditionalModNames(data, mods), ['Galvanized Chamber']);
+  assert.deepEqual(AB.conditionalModStacks(data, mods), ['Galvanized Chamber at 5 stacks (On Kill)']);
+  const lower = mods.map(m => (m?.name === 'Galvanized Chamber' ? { ...m, stacks: 2 } : m));
+  assert.deepEqual(AB.conditionalModStacks(data, [...lower, { name: 'Laser Sight', rank: 3 }]), ['Galvanized Chamber at 2 stacks (On Kill)', 'Laser Sight on (On Headshot)']);
 });
 
 // ---------- the search, with a fake scorer ----------
@@ -298,6 +300,22 @@ test('the search fills empty slots, keeps locks and the Exilus slot, never uses 
   for (const m of used) assert.equal(AB.fitsWeapon(real().ctx.index.byName.get(m), env.weapon), true);
   assert.ok(res.arcanes[0], 'an arcane is chosen');
   assert.ok(res.changed);
+});
+
+test('the weapon\'s elemental augment is forced in at max rank and kept; kept slots keep their stacks', { skip }, async () => {
+  const { env } = envFor({ finalRefinementSampleSize: 10 }, { weaponName: 'AX-52' });
+  assert.deepEqual(names(AB.elementalAugments(env)), ['Biotic Rounds']);
+  assert.deepEqual(names(AB.elementalAugments(envFor().env)), [], 'Braton Prime has none');
+  const res = await AB.runAutoBuild(env, { start: { mods: [{ name: 'Biotic Rounds', rank: 1 }, ...Array(8).fill(null)], arcanes: [null] }, score: fakeScorer() });
+  assert.deepEqual(res.mods[0], { name: 'Biotic Rounds', rank: 5 }, 'ranked up to max and kept in its slot');
+  const empty = await AB.runAutoBuild(env, { start: { mods: Array(9).fill(null), arcanes: [null] }, score: fakeScorer() });
+  assert.equal(empty.mods.filter(m => m?.name === 'Biotic Rounds').length, 1, 'placed in an empty build');
+  assert.ok(empty.log.some(l => /Placed the weapon's elemental augment: Biotic Rounds/.test(l)), empty.log.join(' | '));
+  // A kept Galvanized mod is scored at its own stacks.
+  const seen = [];
+  const { env: braton } = envFor({ finalRefinementSampleSize: 10 });
+  await AB.runAutoBuild(braton, { start: { mods: [{ name: 'Galvanized Chamber', rank: 10, stacks: 2 }, ...Array(8).fill(null)], arcanes: [null] }, score: async jobs => { seen.push(...jobs.map(j => j.mods[0])); return fakeScorer()(jobs); } });
+  assert.ok(seen.length && seen.every(m => m?.stacks === 2), JSON.stringify(seen[0]));
 });
 
 test('the search: whitelist only, elemental blacklist, and a filled arcane slot is kept', { skip }, async () => {

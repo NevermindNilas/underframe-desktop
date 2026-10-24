@@ -4,6 +4,7 @@
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile, copyFile, access } from 'node:fs/promises';
 import path from 'node:path';
+import { cleanRiven } from './rivens-store.js';
 
 export const FILE_NAME = 'builds.json';
 export const MOD_SLOTS = 9;
@@ -15,9 +16,14 @@ const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 const str = (v, max = MAX_TEXT) => (typeof v === 'string' ? v.slice(0, max) : '');
 
+/** A mod slot: { name, rank, stacks? } (stacks: a conditional mod's assumed stacks, stored only below max). */
 function cleanMod(m) {
+  // A riven slot keeps its whole riven (family, disposition, rank, stats): docs/port-rivens.md 11.4.
+  if (isObj(m) && m.isRiven === true) return cleanRiven(m);
   if (!isObj(m) || typeof m.name !== 'string' || !m.name) return null;
-  return { name: str(m.name, MAX_NAME), rank: Math.max(0, Math.round(num(m.rank))) };
+  const out = { name: str(m.name, MAX_NAME), rank: Math.max(0, Math.round(num(m.rank))) };
+  if (m.stacks != null && Number.isFinite(Number(m.stacks))) out.stacks = Math.max(0, Math.round(Number(m.stacks)));
+  return out;
 }
 
 /** An arcane slot: { name, rank, options?: { stacks?, startingStacks? } } or null. */
@@ -97,6 +103,12 @@ export function normalizeBuild(build) {
       ? { externalBuffs: build.externalBuffs.slice(0, 200).map(cleanExternalBuff).filter(Boolean) } : {}),
     ...(Array.isArray(build.externalStatuses) && build.externalStatuses.length
       ? { externalStatuses: build.externalStatuses.slice(0, 30).map(cleanExternalStatus).filter(Boolean) } : {}),
+    // Weapon options: a Progenitor bonus { element, value }, an exalted weapon's ability strength, passive states.
+    ...(isObj(build.progenitor) && typeof build.progenitor.element === 'string' && Number.isFinite(Number(build.progenitor.value))
+      ? { progenitor: { element: str(build.progenitor.element, 40), value: Number(build.progenitor.value) } } : {}),
+    ...(Number.isFinite(Number(build.exaltedStrength)) && build.exaltedStrength !== null ? { exaltedStrength: Number(build.exaltedStrength) } : {}),
+    ...(isObj(build.passives) ? { passives: Object.fromEntries(Object.entries(build.passives).slice(0, 40)
+      .filter(([k, v]) => typeof k === 'string' && Number.isFinite(Number(v))).map(([k, v]) => [str(k, MAX_NAME), Math.round(Number(v))])) } : {}),
     enemy: cleanEnemy(build.enemy),
 
     simTime: num(build.simTime, 20),

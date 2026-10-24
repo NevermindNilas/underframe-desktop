@@ -13,7 +13,11 @@ developer's permission.
   with slot polarities (Forma) and the Orokin Catalyst
 - Card gallery with smart search (`cc`, `drain<=6`, `pol:v`, `is:exilus`, "Did you mean"), filters,
   drag and drop and keyboard pick-up; compatibility and conflict checks on every card
-- Weapon arcanes, simulated at the stacks you set
+- Weapon arcanes and conditional mods (Galvanized and the like), simulated at the stacks you set
+- Rivens: your own rolls, disposition and rank, kept in a library of your rivens
+- External buffs and target statuses, with presets
+- Weapon options: Progenitor bonuses, exalted weapons' ability strength, weapon passives; combined fire modes
+- Auto build: the underframe.site optimizer, with blacklists, whitelists and Cost Control
 - Screenshot import: reads a build from an arsenal screenshot (file, paste, drop or the game window)
   with Windows' built-in text recognition, on this PC
 - Target presets with level scaling and Steel Path
@@ -93,8 +97,9 @@ core/          Private submodule: Underframe engine (.wasm + loader) and data.js
   as a text card.
 - Screenshot import runs Windows.Media.Ocr through a small PowerShell helper
   (`src/main/ocr/`, unpacked from the asar); nothing is uploaded.
-- Known v1 limits: guns only. No melee, warframe abilities, rivens, conditional
-  mods or incarnon-specific bonuses yet.
+- Known limits: guns only (no melee, companions, archguns or kitguns), no Incarnon
+  evolutions. The stats match underframe.site's engine input for every supported gun
+  (docs/port-weapon-stats.md).
 
 ## Testing modes
 

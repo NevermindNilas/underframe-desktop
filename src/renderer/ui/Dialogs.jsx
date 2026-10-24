@@ -148,7 +148,7 @@ function AboutDialog() {
               <Subtitle2 as="h3">Known limits</Subtitle2>
               <ul className={styles.list}>
                 <li><Body1>Guns only (primary and secondary weapons).</Body1></li>
-                <li><Body1>Weapon arcanes are simulated; rivens, conditional mods, incarnon bonuses and warframe arcanes that buff weapons are not yet.</Body1></li>
+                <li><Body1>Weapon arcanes and rivens are simulated; conditional mods, incarnon bonuses and warframe arcanes that buff weapons are not yet.</Body1></li>
                 <li><Body1>Screenshot import needs an English game client and reads mods by their printed names.</Body1></li>
 
               </ul>

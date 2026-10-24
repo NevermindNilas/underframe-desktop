@@ -18,6 +18,7 @@ import * as AB from '../src/shared/auto-build.js';
 import * as M from '../src/renderer/model.js';
 import { runAutoBuildJob } from '../src/renderer/auto-build-job.js';
 import { createAppStateCache } from '../src/renderer/app-state-cache.js';
+import { resolveModConditionals } from '../src/shared/conditional-mods.js';
 
 const coreDir = fileURLToPath(new URL('../core/', import.meta.url));
 const hasCore = existsSync(coreDir + 'engine/dps_calculator.wasm') && existsSync(coreDir + 'data/data.json');
@@ -116,7 +117,7 @@ test('stat locks: Semi-Cannonade keeps the base fire rate against mods, External
   // underframe.site: finalFireRate 2.08 (the weapon's own), multishot still modded (Lethal Torrent).
   rel(s.mode.finalFireRate, 2.08);
   rel(s.mode.finalMultishot, 1.6);
-  assert.equal(s.mode.fireRateLocked, true);
+  assert.equal(s.mode.fireRateHeld, true, 'the stat lock holds the rate (the engine field fireRateLocked is for mode locks)');
   // The site's input gave 273.7 DPS (the app gave 584.0 before the lock).
   rel(await siteDps(s, mods), 273.7, 2e-4);
   const unlocked = statsFor('Lex Prime', [{ name: 'Gunslinger', rank: 5 }], [row('ext_fire_rate', 60)]);
@@ -128,6 +129,67 @@ test('stat locks: Acuity keeps the base multishot against mods and External Mult
   assert.equal(s.mode.finalMultishot, 1);
   assert.equal(s.mode.multishotLocked, true);
   assert.ok(statsFor('Braton Prime', [{ name: 'Split Chamber', rank: 5 }]).mode.finalMultishot > 1.8);
+});
+
+/** Mean avgDps of a build with conditional-mod stacks and target statuses, on the captured enemy (5 s, seeds 1-8). */
+async function conditionalDps(weaponName, mods, statuses = []) {
+  const { data, index } = real();
+  const e = await engine();
+  const weapon = data.weapons.find(w => w.name === weaponName);
+  const reload = data.reload_data.find(r => r.name === weaponName) ?? null;
+  const conditionals = resolveModConditionals(mods, weapon, data);
+  const { modes } = computeWeaponStats(weapon, mods, { modsByName: index.byName, reload, targetFaction: 'Grineer', externalStatuses: statuses, conditionals });
+  const input = buildEngineInput({
+    weapon, modSlots: mods, weaponStats: modes, enemy: SITE_ENEMY, modeName: 'Normal Attack', maxTime: 5, reload,
+    appState: buildAppState(data, weapon, { externalStatuses: statuses }), debugLog: false, conditionals,
+  });
+  input.enemyConfig = { ...input.enemyConfig, ...SITE_ENEMY };
+  const json = JSON.stringify(input);
+  let sum = 0;
+  for (let s = 1; s <= 8; s++) {
+    e.seed_rng(s);
+    const r = JSON.parse(e.calculate_dps_wasm(json));
+    assert.equal(r.error, undefined, r.error);
+    sum += r.avgDps;
+  }
+  return { dps: sum / 8, modes };
+}
+
+test('conditional mods: Galvanized stacks, Condition Overload, Double Tap and Wild Frenzy match underframe.site', { skip, timeout: 60_000 }, async () => {
+  const m = (name, rank, stacks) => ({ name, rank, ...(stacks != null ? { stacks } : {}) });
+  // Captured on underframe.site with these activeConditionals (docs/port-weapon-stats.md 3).
+  const cases = [
+    ['Braton Prime', [m('Serration', 10), m('Galvanized Chamber', 10, 5), m('Galvanized Scope', 10, 3), m('Point Strike', 5)], [], 1193.8],
+    ['Braton Prime', [m('Serration', 10), m('Galvanized Aptitude', 10, 2), m('Infected Clip', 5), m('Cryo Rounds', 5)], [{ type: 'Viral', stacks: 2 }, { type: 'Impact', stacks: 1 }], 2885.4],
+    ['Lex Prime', [m('Hornet Strike', 10), m('Galvanized Shot', 10, 2), m('Galvanized Diffusion', 10, 4), m('Lethal Torrent', 5)], [], 1128.1],
+    ['Latron', [m('Double Tap', 3, 10), m('Serration', 10), m('Point Strike', 5)], [], 234.6],
+    ['Grakata', [m('Wild Frenzy', 5), m('Serration', 10), m('Speed Trigger', 5)], [], 151.5],
+  ];
+  for (const [weapon, mods, statuses, site] of cases) {
+    const { dps } = await conditionalDps(weapon, mods, statuses);
+    rel(dps, site, 2e-4);
+  }
+  // The site's weaponStats for the Galvanized Aptitude build: +80% Condition Overload.
+  const { modes } = await conditionalDps('Braton Prime', cases[1][1], cases[1][2]);
+  rel(modes[0].conditionOverload, 0.8, 1e-6);
+});
+
+test('per-mode locks: hitscan area modes and named modes keep their multishot; Glory, bows and beams', { skip }, () => {
+  const ms = [{ name: 'Split Chamber', rank: 5 }];
+  const braton = statsFor('Braton Prime', ms).modes;
+  assert.ok(braton.find(x => x.mode_name === 'Normal Attack').finalMultishot > 1.8);
+  assert.equal(braton.find(x => x.mode_name === 'Incarnon Form AoE').finalMultishot, 1, 'as the site: 1');
+  const sobek = statsFor('Sobek', [{ name: 'Hell\'s Chamber', rank: 5 }]).modes;
+  assert.equal(sobek.find(x => x.mode_name === 'Acid Shells').multishotLocked, true);
+  const glory = statsFor('Glory', [{ name: 'Hornet Strike', rank: 10 }, { name: 'Gunslinger', rank: 5 }]).modes;
+  const alt = glory.find(x => x.mode_name === 'Alternate Fire');
+  assert.equal(alt.fireRateLocked, true);
+  assert.ok(glory.find(x => x.mode_name === 'Normal Attack').totalFinalDamage > 2 * (statsFor('Glory', []).modes[0].totalFinalDamage), 'Hornet Strike counts on the normal attack');
+  rel(alt.totalFinalDamage, statsFor('Glory', []).modes.find(x => x.mode_name === 'Alternate Fire').totalFinalDamage, 1e-9);
+  const paris = statsFor('Paris', []).modes.find(x => x.mode_name === 'Uncharged Shot');
+  assert.equal(paris.finalFireRate, 1000, 'no wait between uncharged shots');
+  const phage = statsFor('Phage', [{ name: 'Hell\'s Chamber', rank: 5 }]).modes[0];
+  rel(phage.finalMultishot, 6 * 2.2 + 1, 1e-6);
 });
 
 test('a Cold status on the target lets Primary Frostbite build stacks (readout and Auto build)', { skip }, () => {
@@ -220,6 +282,6 @@ test('Auto build on Lex Prime does not pair a Semi-Cannonade with fire-rate mods
   assert.ok(r.after > r.before, `${r.before} -> ${r.after}`);
   // Whatever it picked, its stats lock the fire rate exactly when a Cannonade is in.
   const s = statsFor('Lex Prime', r.mods);
-  assert.equal(s.mode.fireRateLocked, used.includes('Semi-Pistol Cannonade'));
+  assert.equal(s.mode.fireRateHeld, used.includes('Semi-Pistol Cannonade'));
   void maxRank;
 });

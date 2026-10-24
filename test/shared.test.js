@@ -45,13 +45,27 @@ test('enemy scaling matches the game curves', () => {
   assert.equal(scaleEnemy({ base_armor: 5000, base_level: 1 }, { level: 200 }).armor, 2700);
 });
 
-const rifle = { name: 'Kuva Sobek Test', type: 'Primary', subtype: 'Shotgun', fire_modes: [{ mode_name: 'a' }] };
+const rifle = { name: 'Kuva Sobek', type: 'Primary', subtype: 'Shotgun', fire_modes: [{ mode_name: 'a' }] };
 test('mod compatibility follows type, compat tag and weapon family', () => {
   assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Shotgun' }, rifle));
   assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'PRIMARY' }, rifle));
-  assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Sobek' }, rifle));
+  assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Sobek' }, rifle), 'an augment fits its family');
+  assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Sobek' }, { ...rifle, name: 'Sobekian' }));
   assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle' }, rifle));
   assert.ok(!isModCompatible({ Type: 'SECONDARY', 'Compat Name': 'Shotgun' }, rifle));
+  // The game's tags: an excluded tag rejects; required tags need one match (on weapons that list their classes).
+  const tagged = { name: 'Braton', type: 'Primary', subtype: 'Rifle', compatibility_tags: ['PROJECTILE', 'AUTO'], mod_compatibility_types: ['/Lotus/Weapons/Tenno/Rifle/LotusRifle'], fire_modes: [{ mode_name: 'a' }] };
+  assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle' }, tagged));
+  assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', incompatibility_tags: ['AUTO'] }, tagged));
+  assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', compatibility_tags: ['BEAM'] }, tagged));
+  assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', compatibility_tags: ['BEAM', 'AUTO'] }, tagged));
+  // A mod listing native weapon classes fits by that list (Adhesive Blast on launchers).
+  assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Unique', native_item_compatibility: ['/Lotus/Weapons/Tenno/Rifle/LotusRifle'] }, tagged));
+  assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', native_item_compatibility: ['/Lotus/Weapons/Tenno/Bows/LotusBow'] }, tagged));
+  // Tainted Mag fits real rifles only; Semi-Cannonade needs a weapon that takes it.
+  assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', 'Local Name': 'Tainted Mag' }, { ...tagged, subtype: 'Sniper' }));
+  assert.ok(!isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', 'Local Name': 'Semi-Rifle Cannonade' }, tagged));
+  assert.ok(isModCompatible({ Type: 'PRIMARY', 'Compat Name': 'Rifle', 'Local Name': 'Semi-Rifle Cannonade' }, { ...tagged, cannonade_compatible: true }));
   const index = { incompatible: new Map([['Serration', new Set(['Amalgam Serration'])]]) };
   assert.equal(conflictingMod('Serration', ['Amalgam Serration'], index), 'Amalgam Serration');
   assert.equal(conflictingMod('Serration', ['Serration'], index), 'Serration');

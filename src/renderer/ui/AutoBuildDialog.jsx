@@ -26,6 +26,7 @@ import * as AS from '../../shared/auto-build-settings.js';
 import { arcaneSummary, arcaneSupport, indexArcanes, isArcaneCompatible } from '../../shared/arcanes.js';
 import { nothingToFill } from '../../shared/auto-build.js';
 import { isModCompatible, maxRank } from '../../shared/mods.js';
+import { modeLabel } from '../../shared/fire-modes.js';
 import { arcaneEntry, buildModIndex, parseQuery, searchEntries, sortResults } from '../../shared/mod-search.js';
 import { defaultPoolSize } from '../auto-build-pool.js';
 import { ArtImage, PolarityGlyph, RARITY_TOKEN, useCards, useTextCards } from './art.jsx';
@@ -480,7 +481,7 @@ function ResultView() {
       ) : null}
       {conditional.length ? (
         <Caption1 as="p" className={styles.line} data-testid="auto-build-conditional">
-          <InfoRegular aria-hidden="true" /> {conditional.join(', ')} {conditional.length === 1 ? 'is' : 'are'} scored without {conditional.length === 1 ? 'its' : 'their'} stacking bonus (this app has no stacks); underframe.site counts max stacks, so it may rank {conditional.length === 1 ? 'it' : 'them'} higher.
+          <InfoRegular aria-hidden="true" /> Scored with {conditional.join(', ')}, as underframe.site does. After applying, change the stacks from the slot.
         </Caption1>
       ) : null}
       {partial.length || arcaneNote ? (
@@ -513,7 +514,7 @@ function RunPanel({ keep, setKeep, keepArcane, setKeepArcane }) {
       {ab?.status === 'cancelled' ? <Body1 as="p" className={styles.muted} data-testid="auto-build-cancelled">Cancelled. Nothing changed.</Body1> : null}
       {dropped && !ab ? <Caption1 as="p" className={styles.line} data-testid="auto-build-dropped"><InfoRegular aria-hidden="true" /> The build changed, so the last result was dropped. Run again.</Caption1> : null}
       <Caption1 as="p" className={styles.muted}>
-        Fills {weaponName}'s empty slots with the mods and arcane that score best against {targetLabel(enemy)}, with the {modeName} fire mode
+        Fills {weaponName}'s empty slots with the mods and arcane that score best against {targetLabel(enemy)}, with the {modeLabel(modeName)} fire mode
         {buffs ? ', this build\'s external buffs and target statuses' : ''}. The Exilus slot is never filled.
       </Caption1>
       <ul className={styles.summary} aria-label="Settings" data-testid="auto-build-summary">
@@ -1041,6 +1042,7 @@ export function AutoBuildButton() {
         onClick={() => actions.setAutoBuildOpen(true)}
         data-testid="auto-build-open"
         data-focus-id="auto-build-open"
+        style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
       >
         {`Auto build${status}`}
       </Button>

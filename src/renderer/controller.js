@@ -7,10 +7,13 @@ import { createAppStateCache } from './app-state-cache.js';
 import { buildAppState } from '../shared/engine-input.js';
 import { maxRank, conflictingMod } from '../shared/mods.js';
 import { arcaneControls, arcaneMaxRank, isArcaneCompatible } from '../shared/arcanes.js';
+import { withModStacks } from '../shared/conditional-mods.js';
+import { effectiveProgenitor } from '../shared/stats.js';
 import * as X from '../shared/external-buffs.js';
+import * as RV from '../shared/rivens.js';
 import { createCardAssets, loadCardAssets } from '../shared/card-assets.js';
 import * as M from './model.js';
-import { buildStats, engineInputFor } from './sim.js';
+import { buildStats, engineInputFor, targetStatusesOf } from './sim.js';
 import { baseModeOf, weakestSlot } from './sheet.js';
 import * as H from './history.js';
 import * as AS from '../shared/auto-build-settings.js';
@@ -135,6 +138,10 @@ export const store = createStore({
   /** The Average DPS when the External buffs dialog opened: its footer compares the live result with it. */
   buffsBaseline: null,
   buffPresets: { version: 1, presets: [] },
+  // Rivens (docs/port-rivens.md): the riven dialog ({ slot, riven: the riven being edited or null for a new one }) and
+  // the user's riven library (one per user, on disk).
+  rivenDialog: null,
+  rivenLibrary: { version: 1, rivens: [] },
   // Auto build (docs/port-auto-build.md): the dialog, the run ({ status, percent, step, detail, runs, elapsedMs, result,
   // error, startSnapshot, ... } or null) and the user's configs (auto-build-settings.js library; null until loaded).
   autoBuildOpen: false,
@@ -421,9 +428,9 @@ async function runSim() {
     const weapon = ctx.weaponByName.get(build.weaponName);
     if (!weapon) throw new Error(`Unknown weapon: ${build.weaponName}`);
     if (injectedSimError) throw new Error(injectedSimError);
-    const results = await appStates.withAppState(weapon, build.externalStatuses, ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false }), M.SIM_SEEDS));
+    const results = await appStates.withAppState(weapon, targetStatusesOf(ctx, build), ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false }), M.SIM_SEEDS));
     if (gen !== simGen) return null;
-    const summary = M.summarizeRuns(results, build.simTime);
+    const summary = M.summarizeRuns(results, build.simTime, { removedHp: buildStats(ctx, build)?.removedHp ?? 0 });
     if (!summary.ok) throw new Error(summary.error);
     store.set(s => ({
       sim: {
@@ -436,7 +443,7 @@ async function runSim() {
     flushPendingPin();
     syncLastResult();
 
-    const [debug] = await appStates.withAppState(weapon, build.externalStatuses, ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: true }), [M.SIM_SEEDS[0]]));
+    const [debug] = await appStates.withAppState(weapon, targetStatusesOf(ctx, build), ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: true }), [M.SIM_SEEDS[0]]));
     if (gen !== simGen) return summary;
     const debugOk = debug && !debug.error && Array.isArray(debug.debugLog);
     store.set(s => ({
@@ -530,8 +537,8 @@ async function startSweep(slot) {
   setGallery({ tab: 'best' });
   store.set({ pickerOpen: true, selectedSlot: slot, preview: null });
   const dpsOf = async modSlots => {
-    const runs = await appStates.withAppState(weapon, build.externalStatuses, ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false, modSlots }), M.SWEEP_SEEDS));
-    const s = M.summarizeRuns(runs, build.simTime);
+    const runs = await appStates.withAppState(weapon, targetStatusesOf(ctx, build), ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false, modSlots }), M.SWEEP_SEEDS));
+    const s = M.summarizeRuns(runs, build.simTime, { removedHp: buildStats(ctx, build, modSlots)?.removedHp ?? 0 });
     return s.ok ? s.avgDps : NaN;
   };
   const patch = p => store.set(s => (token === sweepToken && s.sweep ? { sweep: { ...s.sweep, ...p } } : null));
@@ -567,6 +574,8 @@ function stopSweep(status) {
 
 /** What had focus when the External buffs dialog opened. */
 let buffsOpener = null;
+/** What had focus when the riven dialog opened. */
+let rivenOpener = null;
 
 // ---------- Auto build (docs/port-auto-build.md) ----------
 
@@ -1065,6 +1074,36 @@ export const actions = {
 
   setMode(modeName) { updateBuild(b => (b.modeName === modeName ? b : { ...b, modeName })); },
 
+  // ---- Weapon options: Progenitor bonus, exalted ability strength, passives (weapon-passives.js) ----
+  /** `patch` is { element?, value? }; the bonus starts from the site's default (Magnetic 25%). */
+  setProgenitor(patch) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const weapon = ctx.weaponByName.get(b.weaponName);
+      const current = effectiveProgenitor(weapon, b.progenitor);
+      if (!current) return b;
+      const next = M.normalizeWeaponOptions(ctx, weapon, { progenitor: { ...current, ...patch } }).progenitor;
+      return JSON.stringify(next) === JSON.stringify(b.progenitor) ? b : { ...b, progenitor: next };
+    });
+  },
+  setExaltedStrength(percent) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const next = M.normalizeWeaponOptions(ctx, ctx.weaponByName.get(b.weaponName), { exaltedStrength: percent }).exaltedStrength;
+      return next === b.exaltedStrength ? b : { ...b, exaltedStrength: next };
+    });
+  },
+  /** A passive's stacks, scope tier or choice (0 is off). */
+  setPassive(name, value) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const weapon = ctx.weaponByName.get(b.weaponName);
+      const cleaned = M.normalizeWeaponOptions(ctx, weapon, { passives: { [name]: value } }).passives;
+      if (!(name in cleaned) || b.passives?.[name] === cleaned[name]) return b;
+      return { ...b, passives: { ...(b.passives ?? {}), [name]: cleaned[name] } };
+    });
+  },
+
   /** Equip a mod (rank defaults to max). Returns false and explains when it cannot go in that slot. */
   equipMod(slot, name, rank, { focus = true, quiet = false } = {}) {
     const { ctx, build } = store.get();
@@ -1359,9 +1398,19 @@ export const actions = {
     updateBuild(b => {
       const s = b.mods[slot];
       if (!s) return b;
-      const max = maxRank(store.get().ctx.index.byName.get(s.name));
+      const max = s.isRiven ? RV.RIVEN_MAX_RANK : maxRank(store.get().ctx.index.byName.get(s.name));
       const r = Math.min(max, Math.max(0, Math.round(rank)));
       return r === s.rank ? b : M.setSlot(b, slot, { ...s, rank: r });
+    });
+  },
+  /** A conditional mod's assumed stacks (Galvanized: 0 to max; a one-stack conditional: 0 off, 1 on). */
+  setModStacks(slot, stacks) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const s = b.mods[slot];
+      if (!s) return b;
+      const next = withModStacks(s, stacks, ctx.data);
+      return next.stacks === s.stacks ? b : M.setSlot(b, slot, next);
     });
   },
 
@@ -1370,6 +1419,127 @@ export const actions = {
     const changed = updateBuild(b => (b.mods[slot] ? M.setSlot(b, slot, null) : b));
     if (changed && name) announce(`Removed ${name}.`);
     if (changed && focus) focusLater(`slot-add-${slot}`);
+  },
+
+  // ---- Rivens (docs/port-rivens.md) ----
+
+  /**
+   * Open the riven dialog for a mod slot: it edits the riven in the slot, else creates one there. Refused (and said)
+   * on a weapon that takes no riven, in the Exilus slot, or when another slot holds the build's riven.
+   */
+  openRivenDialog(slot) {
+    const { ctx, build } = store.get();
+    if (!build || !Number.isInteger(slot)) return false;
+    const reason = RV.rivenSlotBlockReason(build, ctx.weaponByName.get(build.weaponName), slot);
+    if (reason) {
+      announce(`${reason}.`);
+      notify({ intent: 'info', title: `${reason}.` });
+      return false;
+    }
+    rivenOpener = document.activeElement;
+    const current = build.mods[slot];
+    store.set({ rivenDialog: { slot, riven: RV.isRiven(current) ? current : null } });
+    return true;
+  },
+  /** Close the riven dialog without saving; focus goes back to what opened it, else to its slot. */
+  closeRivenDialog() {
+    const d = store.get().rivenDialog;
+    if (!d) return;
+    store.set({ rivenDialog: null });
+    const el = rivenOpener;
+    rivenOpener = null;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (focusable(el) && !el.closest?.('[role="dialog"], [role="alertdialog"]')) el.focus();
+      else focusLater(slotFocusId(store.get().build, d.slot));
+    }));
+  },
+  /**
+   * Save the dialog's riven into its slot (one undo step) and, when asked or when the library already has it, into
+   * the library. Returns { ok: true } or { ok: false, errors } (validateRiven() errors) and keeps the dialog open.
+   */
+  saveRiven(riven, { toLibrary = false } = {}) {
+    const { ctx, build, rivenDialog, rivenLibrary } = store.get();
+    if (!rivenDialog) return { ok: false, errors: [] };
+    const weapon = ctx.weaponByName.get(build.weaponName);
+    const clean = RV.normalizeRiven({ ...riven, isRiven: true, family: RV.rivenFamily(weapon?.name), id: riven?.id || RV.newRivenId() });
+    const check = RV.validateRiven(clean, { data: ctx.data, weapon });
+    if (!clean || !check.ok) return { ok: false, errors: check.errors };
+    const slot = rivenDialog.slot;
+    const reason = RV.rivenSlotBlockReason(build, weapon, slot);
+    if (reason) return { ok: false, errors: [{ field: 'stats', message: `${reason}.` }] };
+    updateBuild(b => M.setSlot(b, slot, clean));
+    if (toLibrary || rivenLibrary.rivens.some(r => r.id === clean.id)) {
+      storeRivenLibrary(RV.upsertLibraryRiven(rivenLibrary, clean))
+        .catch(e => notify({ intent: 'warning', title: "Couldn't save the riven to your rivens.", body: errorText(e) }));
+    }
+    announce(`${RV.rivenShortName(clean)} ${rivenDialog.riven ? 'saved' : 'equipped'} in ${M.slotLabel(slot).toLowerCase()}. Average DPS updating.`);
+    store.set({ rivenDialog: null });
+    rivenOpener = null;
+    if (store.get().pickerOpen) actions.closePicker({ focusSlot: slot, focus: true });
+    else focusLater(slotFocusId(store.get().build, slot));
+    return { ok: true };
+  },
+  /** Equip a copy of a library riven in `slot`, else the selected slot, else the first empty general slot. */
+  equipLibraryRiven(id, slot = null) {
+    const { ctx, build, rivenLibrary, selectedSlot } = store.get();
+    const riven = rivenLibrary.rivens.find(r => r.id === id);
+    if (!riven) return { ok: false, reason: 'Unknown riven' };
+    const weapon = ctx.weaponByName.get(build.weaponName);
+    const chosen = Number.isInteger(slot) ? slot : Number.isInteger(selectedSlot) ? selectedSlot : null;
+    const target = chosen ?? M.GENERAL_SLOTS.find(i => !build.mods[i]) ?? null;
+    // A library riven is checked like a loaded one (family and the site's rules), so it never equips only to be
+    // dropped as invalid when the build is reopened.
+    const fit = RV.rivenSlotFor(riven, weapon, ctx.data);
+    const reason = target == null ? 'All slots are full. Select a slot to replace its mod'
+      : !fit.slot ? `Can't equip ${fit.dropped}`
+        : RV.rivenSlotBlockReason(build, weapon, target);
+    if (reason) {
+      announce(`${reason}.`);
+      return { ok: false, reason };
+    }
+    updateBuild(b => M.setSlot(b, target, fit.slot));
+    announce(`${RV.rivenShortName(riven)} equipped in ${M.slotLabel(target).toLowerCase()}. Average DPS updating.`);
+    actions.closePicker({ focusSlot: target, focus: true });
+    return { ok: true, slot: target };
+  },
+  /** Add the riven in a slot to the library, or update its copy there. A riven without an id gets one. */
+  async saveRivenToLibrary(slot) {
+    const { build, rivenLibrary } = store.get();
+    const riven = build.mods[slot];
+    if (!RV.isRiven(riven)) return false;
+    let withId = riven;
+    if (!riven.id) {
+      withId = { ...riven, id: RV.newRivenId() };
+      // Not an edit of the build's content worth an undo step: the id only links the slot to the library copy.
+      commitBuild(M.setSlot(build, slot, withId), { resim: false, record: false });
+    }
+    try {
+      await storeRivenLibrary(RV.upsertLibraryRiven(rivenLibrary, withId));
+    } catch (e) {
+      notify({ intent: 'warning', title: "Couldn't save the riven to your rivens.", body: errorText(e) });
+      return false;
+    }
+    announce(`Saved ${RV.rivenShortName(withId)} to your rivens.`);
+    notify({ intent: 'success', title: `Saved ${RV.rivenShortName(withId)} to your rivens.` });
+    return true;
+  },
+  /** Remove a riven from the library, with Undo; builds that hold it keep their copy. */
+  async removeLibraryRiven(id) {
+    const riven = store.get().rivenLibrary.rivens.find(r => r.id === id);
+    if (!riven) return false;
+    try {
+      await storeRivenLibrary(RV.removeLibraryRiven(store.get().rivenLibrary, id));
+    } catch (e) {
+      notify({ intent: 'warning', title: "Couldn't update your rivens.", body: errorText(e) });
+      return false;
+    }
+    announce(`Removed ${RV.rivenShortName(riven)} from your rivens.`);
+    notify({
+      intent: 'success',
+      title: `Removed ${RV.rivenShortName(riven)} from your rivens`,
+      action: { label: 'Undo', run: () => { storeRivenLibrary(RV.upsertLibraryRiven(store.get().rivenLibrary, riven)).catch(() => {}); } },
+    });
+    return true;
   },
 
   setTarget(patch) {
@@ -1575,7 +1745,8 @@ export const actions = {
       actions.setAutoBuildOpen(false);
       return false;
     }
-    let next = { ...s.build, mods: r.mods.map(m => (m ? { name: m.name, rank: m.rank } : null)) };
+    // A kept riven comes back whole (its stats are the slot).
+    let next = { ...s.build, mods: r.mods.map(m => (m?.isRiven ? m : m ? { name: m.name, rank: m.rank, ...(m.stacks != null ? { stacks: m.stacks } : {}) } : null)) };
     (r.arcanes ?? []).forEach((a, i) => { next = M.setArcane(s.ctx, next, i, a ?? null); });
     // Cost Control's Forma plan: the slot polarities that make the result fit, in the same undo step.
     next = M.withFormaPlan(s.ctx, next, r.formaPlan);
@@ -1908,6 +2079,22 @@ async function loadBuffPresets() {
   }
 }
 
+/** Write the riven library through the main process (rivens.json in userData), then keep what it stored. */
+async function storeRivenLibrary(library) {
+  const saved = await uf.rivens.set(library);
+  store.set({ rivenLibrary: RV.normalizeRivenLibrary(saved ?? library) });
+}
+
+async function loadRivenLibrary() {
+  // Smoke and scene runs start from an empty library (never from the user's rivens).
+  if (automated) return;
+  try {
+    store.set({ rivenLibrary: RV.normalizeRivenLibrary(await uf.rivens?.get?.()) });
+  } catch (e) {
+    errors.push(`riven library: ${errorText(e)}`);
+  }
+}
+
 async function loadSavedBuilds() {
   try {
     const list = await uf.builds.list();
@@ -1988,6 +2175,7 @@ export async function boot({ onReady } = {}) {
     loading({ text: 'Reading your builds…' });
     const savedBuilds = await loadSavedBuilds();
     await loadBuffPresets();
+    await loadRivenLibrary();
     await loadAutoBuild(data);
 
     let build = M.createBuild(ctx);

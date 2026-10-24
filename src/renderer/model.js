@@ -3,11 +3,16 @@ import { FACTIONS, resolveFaction } from '../shared/factions.js';
 import { scaleEnemy } from '../shared/enemy.js';
 import { indexMods, isSupportedWeapon, isModCompatible, maxRank, conflictingMod } from '../shared/mods.js';
 import { selectableModes } from '../shared/stats.js';
+import { defaultModeId, modeChoices } from '../shared/fire-modes.js';
+import { PROGENITOR_ELEMENTS, PROGENITOR_MAX } from '../shared/stats.js';
+import { exaltedConfig, passiveControl, weaponPassives } from '../shared/weapon-passives.js';
 import {
   arcaneSlotCount, arcanesFor, arcaneMaxRank, defaultArcaneOptions, isArcaneCompatible, normalizeArcaneEntry, arcaneSupport,
 } from '../shared/arcanes.js';
 import { SLOT_POLARITIES, capacityOf, capacityUse, effectiveSlotPolarities, formaCount, innateSlotPolarities } from '../shared/capacity.js';
 import { buffKey, buffLine, normalizeBuffList, normalizeStatuses, statusLine } from '../shared/external-buffs.js';
+import { modConditionalControls, withModStacks } from '../shared/conditional-mods.js';
+import { isRiven, rivenFitsWeapon, rivenSlotFor, sameRivenContent } from '../shared/rivens.js';
 import { fmtCompact } from './format.js';
 
 export const SLOT_COUNT = 9;
@@ -62,8 +67,10 @@ export function defaultWeaponName(ctx) {
   return ctx.weaponByName.has(DEFAULT_WEAPON) ? DEFAULT_WEAPON : ctx.weapons[0]?.name ?? '';
 }
 
-export function defaultModeName(weapon) {
-  return weapon ? selectableModes(weapon)[0]?.mode_name ?? '' : '';
+/** The mode a build of this weapon starts on: the data's default (a combined mode for a few weapons), else the first. */
+export function defaultModeName(weapon, data = null, mods = []) {
+  if (!weapon) return '';
+  return data ? defaultModeId(data, weapon, mods) : selectableModes(weapon)[0]?.mode_name ?? '';
 }
 
 /** Find a preset by name, forgiving case and a plural "-men" for "-man". */
@@ -162,7 +169,7 @@ export function createBuild(ctx, overrides = {}) {
   return {
     name: 'New build',
     weaponName: weapon?.name ?? '',
-    modeName: defaultModeName(weapon),
+    modeName: defaultModeName(weapon, ctx.data),
     mods: emptySlots(),
     arcanes: emptyArcanes(weapon),
     slotPolarities: emptyPolarities(),
@@ -171,6 +178,10 @@ export function createBuild(ctx, overrides = {}) {
     // underframe.site's shapes: [{ id, name, value, element?, factionValue?, sourceBuild? }] and [{ type, stacks }].
     externalBuffs: [],
     externalStatuses: [],
+    // The weapon's options, at their defaults: the site's Progenitor bonus, 100% strength, the passives' defaults.
+    progenitor: null,
+    exaltedStrength: null,
+    passives: {},
     enemy: defaultEnemy(ctx),
     simTime: DEFAULT_DURATION,
     notes: '',
@@ -187,13 +198,16 @@ export function normalizePolarities(raw) {
 }
 
 function normalizeSlot(ctx, weapon, slot) {
+  // A riven is kept when it fits the weapon's family and passes the site's rules (docs/port-rivens.md 11.4).
+  if (slot?.isRiven) return rivenSlotFor(slot, weapon, ctx.data);
   if (!slot || typeof slot.name !== 'string') return { slot: null };
   const mod = ctx.index.byName.get(slot.name);
   if (!mod) return { slot: null, dropped: `${slot.name} (unknown mod)` };
   if (weapon && !isModCompatible(mod, weapon)) return { slot: null, dropped: `${slot.name} (does not fit ${weapon.name})` };
   const max = maxRank(mod);
   const rank = Number.isFinite(Number(slot.rank)) ? Math.min(max, Math.max(0, Math.round(Number(slot.rank)))) : max;
-  return { slot: { name: slot.name, rank } };
+  // A conditional mod's stacks are kept below max (max, the default, is not stored).
+  return { slot: withModStacks({ name: slot.name, rank }, slot.stacks, ctx.data) };
 }
 
 /**
@@ -207,12 +221,13 @@ export function normalizeBuild(ctx, raw) {
     if (raw?.weaponName) warnings.push(`${raw.weaponName} is not available; switched to ${defaultWeaponName(ctx)}.`);
     weapon = ctx.weaponByName.get(defaultWeaponName(ctx));
   }
-  const modes = selectableModes(weapon).map(m => m.mode_name);
   const mods = emptySlots();
   const dropped = [];
   (Array.isArray(raw?.mods) ? raw.mods : []).slice(0, SLOT_COUNT).forEach((s, i) => {
     const r = normalizeSlot(ctx, weapon, s);
     if (r.dropped) dropped.push(r.dropped);
+    else if (isRiven(r.slot) && i === EXILUS_SLOT) dropped.push(`${r.slot.name} (rivens can't go in the Exilus slot)`);
+    else if (isRiven(r.slot) && mods.some(isRiven)) dropped.push(`${r.slot.name} (only one riven per build)`);
     else if (r.slot && conflictingMod(r.slot.name, mods.map(m => m?.name ?? null), ctx.index)) dropped.push(`${r.slot.name} (conflicts with another mod)`);
     else mods[i] = r.slot;
   });
@@ -238,7 +253,8 @@ export function normalizeBuild(ctx, raw) {
     ...(raw?.id ? { id: raw.id } : {}),
     name: String(raw?.name ?? '').trim() || 'Untitled build',
     weaponName: weapon.name,
-    modeName: modes.includes(raw?.modeName) ? raw.modeName : modes[0] ?? '',
+    // A combined mode ("custom:<name>") is kept while its parts can run with these mods.
+    modeName: modeChoices(ctx.data, weapon, mods).some(c => c.id === raw?.modeName) ? raw.modeName : defaultModeName(weapon, ctx.data, mods),
     mods,
     arcanes,
     slotPolarities: normalizePolarities(raw?.slotPolarities),
@@ -246,6 +262,8 @@ export function normalizeBuild(ctx, raw) {
     // Unknown buff types are dropped; buffs for other weapon classes are kept (and reported as not simulated).
     externalBuffs: normalizeBuffList(raw?.externalBuffs, ctx.data),
     externalStatuses: normalizeStatuses(raw?.externalStatuses),
+    // The weapon's own options: its Progenitor bonus, an exalted weapon's ability strength, its passives.
+    ...normalizeWeaponOptions(ctx, weapon, raw),
     enemy,
     simTime: DURATIONS.includes(Number(raw?.simTime)) ? Number(raw.simTime) : DEFAULT_DURATION,
     notes: String(raw?.notes ?? ''),
@@ -299,6 +317,7 @@ export function contentOf(build) {
     name, weaponName, modeName, mods, ...(arcanes ? { arcanes } : {}),
     ...(slotPolarities ? { slotPolarities } : {}), ...(build.catalyst === false ? { catalyst: false } : {}),
     ...(externalBuffs ? { externalBuffs } : {}), ...(externalStatuses ? { externalStatuses } : {}),
+    ...weaponOptionsOf(build),
     enemy, simTime, notes,
   };
 }
@@ -309,8 +328,51 @@ export function withContent(build, content) {
   // Content without arcanes means "no arcanes", not "keep the current ones" (the same for polarities and buffs).
   return {
     ...identity, arcanes: (build.arcanes ?? []).map(() => null), slotPolarities: emptyPolarities(), catalyst: true,
-    externalBuffs: [], externalStatuses: [], ...content,
+    externalBuffs: [], externalStatuses: [], progenitor: null, exaltedStrength: null, passives: {}, ...content,
   };
+}
+
+/**
+ * The weapon options a build sets (left out at their defaults, so older builds compare equal): its Progenitor bonus,
+ * its exalted weapon's ability strength and its passives.
+ */
+export function weaponOptionsOf(build) {
+  const passives = build?.passives && Object.keys(build.passives).length ? build.passives : null;
+  return {
+    ...(build?.progenitor ? { progenitor: build.progenitor } : {}),
+    ...(build?.exaltedStrength != null ? { exaltedStrength: build.exaltedStrength } : {}),
+    ...(passives ? { passives } : {}),
+  };
+}
+
+/** Clean weapon options for a weapon: a known Progenitor element (0-60%), a positive strength, its own passives. */
+export function normalizeWeaponOptions(ctx, weapon, raw) {
+  const p = raw?.progenitor;
+  const progenitor = weapon?.is_progenitor && p && PROGENITOR_ELEMENTS.includes(p.element) && Number.isFinite(Number(p.value))
+    ? { element: p.element, value: Math.min(PROGENITOR_MAX, Math.max(0, Number(p.value))) } : null;
+  const strength = Number(raw?.exaltedStrength);
+  const exaltedStrength = exaltedConfig(weapon) && Number.isFinite(strength) && strength > 0 ? Math.min(1000, strength) : null;
+  const known = new Map(weaponPassives(ctx.data, weapon).map(e => [e.name, e]));
+  const passives = {};
+  for (const [name, v] of Object.entries(raw?.passives && typeof raw.passives === 'object' ? raw.passives : {})) {
+    const entry = known.get(name);
+    const n = Number(v);
+    if (entry && Number.isFinite(n)) passives[name] = Math.min(passiveControl(entry).max, Math.max(0, Math.round(n)));
+  }
+  return { progenitor, exaltedStrength, passives };
+}
+
+/** A build's weapon passives from a featured build's activeConditionals (off is 0; a choice keeps its value). */
+export function featuredPassives(ctx, weapon, tb) {
+  const states = tb?.activeConditionals ?? {};
+  const out = {};
+  for (const entry of weaponPassives(ctx.data, weapon)) {
+    const s = states[entry.name];
+    if (!s) continue;
+    const kind = passiveControl(entry).kind;
+    out[entry.name] = !s.isActive ? 0 : kind === 'select' ? Number(s.selection) || 0 : kind === 'toggle' ? 1 : Number(s.stacks) || 0;
+  }
+  return out;
 }
 
 /** Whether any arcane slot of a build is filled. */
@@ -327,6 +389,7 @@ export function simKeyOf(ctx, build) {
   return JSON.stringify([
     build.weaponName, build.modeName, build.mods, resolveEnemy(ctx, build.enemy), build.simTime, hasArcanes(build) ? build.arcanes : [],
     ...(build.externalBuffs?.length || build.externalStatuses?.length ? [build.externalBuffs ?? [], build.externalStatuses ?? []] : []),
+    ...(Object.keys(weaponOptionsOf(build)).length ? [weaponOptionsOf(build)] : []),
   ]);
 }
 
@@ -340,6 +403,8 @@ export function changeWeapon(ctx, build, weaponName) {
   const removed = [];
   const mods = build.mods.map(slot => {
     if (!slot) return null;
+    // A riven stays across variants of its family (Braton -> Braton Prime).
+    if (slot.isRiven && rivenFitsWeapon(slot, weapon)) return slot;
     const mod = ctx.index.byName.get(slot.name);
     if (mod && isModCompatible(mod, weapon)) return slot;
     removed.push(slot.name);
@@ -352,7 +417,14 @@ export function changeWeapon(ctx, build, weaponName) {
     else removed.push(a.name);
   });
   // Forma belongs to the weapon it was applied to: the new weapon starts from its own innate polarities.
-  return { build: { ...build, weaponName: weapon.name, modeName: defaultModeName(weapon), mods, arcanes, slotPolarities: emptyPolarities() }, removed };
+  // Its Progenitor bonus, ability strength and passives too: they are the old weapon's.
+  return {
+    build: {
+      ...build, weaponName: weapon.name, modeName: defaultModeName(weapon, ctx.data, mods), mods, arcanes, slotPolarities: emptyPolarities(),
+      progenitor: null, exaltedStrength: null, passives: {},
+    },
+    removed,
+  };
 }
 
 export function setSlot(build, slot, value) {
@@ -522,6 +594,16 @@ export function featuredArcanes(ctx, tb) {
   });
 }
 
+/** A featured build's mods with their stacks from activeConditionals (off is 0 stacks; no state is max, as on equip). */
+export function featuredMods(ctx, tb) {
+  const states = tb?.activeConditionals ?? {};
+  return (Array.isArray(tb?.mods) ? tb.mods : []).map(m => {
+    const state = m && states[m.name];
+    if (!state || !modConditionalControls(m.name, ctx.data)) return m;
+    return { ...m, stacks: state.isActive ? Number(state.stacks) || 0 : 0 };
+  });
+}
+
 /** Equipped arcanes the simulation does not model at all, by name. */
 export function unsimulatedArcaneNames(ctx, build) {
   return (build.arcanes ?? []).filter(a => a && arcaneSupport(a.name, ctx.data).level === 'none').map(a => a.name);
@@ -575,12 +657,18 @@ export function featuredBuilds(ctx) {
 }
 
 /** Parts of a featured build this app does not apply, for an honest note. */
-export function unappliedFeatures(tb) {
+export function unappliedFeatures(tb, ctx = null) {
   const out = [];
-  // Arcanes are applied, with their stacks from activeConditionals; other conditionals are not.
-  const arcaneNames = new Set((tb.arcanes ?? []).filter(Boolean));
-  if (tb.activeConditionals && Object.entries(tb.activeConditionals).some(([k, v]) => v && !arcaneNames.has(k))) out.push('conditionals');
-  if (tb.mods?.some(m => m && /riven/i.test(m.name))) out.push('rivens');
+  // Arcanes, mods and the weapon's passives are applied, with their states from activeConditionals; other conditionals
+  // (Incarnon evolutions, Warframe passives) are not. "Distance" is the site's falloff slider, not a build feature.
+  const weapon = ctx?.weaponByName.get(tb.itemName);
+  const applied = new Set([
+    ...(tb.arcanes ?? []).filter(Boolean), ...(tb.mods ?? []).filter(Boolean).map(m => m.name), 'Distance',
+    ...(weapon ? weaponPassives(ctx.data, weapon).map(e => e.name) : []),
+  ]);
+  if (tb.activeConditionals && Object.entries(tb.activeConditionals).some(([k, v]) => v?.isActive && !applied.has(k))) out.push('conditionals');
+  // Rivens are applied (docs/port-rivens.md); only a riven named without its stats (no riven object) is not.
+  if (tb.mods?.some(m => m && !m.isRiven && /riven/i.test(m.name))) out.push('rivens');
   if (tb.incarnon && Object.values(tb.incarnon).some(Boolean)) out.push('incarnon settings');
   // External buffs and statuses are applied (docs/port-external-buffs.md); a Warframe build's own buff sources are not.
   for (const k of ['externalWeaponBuffs', 'externalAbilities', 'archon_shards']) {
@@ -594,13 +682,15 @@ export function unappliedFeatures(tb) {
 export function buildFromFeatured(ctx, featured, enemy = null) {
   const tb = featured.source;
   const { build, warnings } = normalizeBuild(ctx, {
-    name: featured.name, weaponName: tb.itemName, mods: tb.mods, arcanes: featuredArcanes(ctx, tb), notes: featured.description, enemy,
+    name: featured.name, weaponName: tb.itemName, mods: featuredMods(ctx, tb), arcanes: featuredArcanes(ctx, tb), notes: featured.description, enemy,
     externalBuffs: tb.externalBuffs, externalStatuses: tb.externalStatuses,
+    progenitor: tb.progenitor, exaltedStrength: tb.exaltedStrength,
+    passives: ctx.weaponByName.has(tb.itemName) ? featuredPassives(ctx, ctx.weaponByName.get(tb.itemName), tb) : {},
   });
-  const skipped = unappliedFeatures(tb);
+  const skipped = unappliedFeatures(tb, ctx);
   const unsimulated = unsimulatedArcaneNames(ctx, build);
   const notes = [
-    `Conditionals, rivens and incarnon settings from featured builds are not applied${skipped.length ? ` (this one uses ${skipped.join(', ')})` : ''}.` +
+    `Incarnon settings and Warframe conditionals from featured builds are not applied${skipped.length ? ` (this one uses ${skipped.join(', ')})` : ''}; rivens and mod and arcane stacks are.` +
       (unsimulated.length ? ` ${unsimulated.join(', ')} ${unsimulated.length > 1 ? 'are' : 'is'} equipped but not simulated.` : ''),
     ...(hasExternal(build) ? [`Its ${externalSummary(build)} are applied; Buffs in the Readout lists them.`] : []),
     ...warnings,
@@ -653,11 +743,15 @@ export function simErrorText(message) {
   return m ? `The engine reported: ${m}` : 'The engine gave no reason.';
 }
 
-export function summarizeRuns(results, maxTime) {
+export function summarizeRuns(results, maxTime, { removedHp = 0 } = {}) {
   const errors = results.filter(r => !r || r.error).map(r => String(r?.error ?? 'No result'));
   const ok = results.filter(r => r && !r.error && Number.isFinite(r.avgDps));
   if (!ok.length) return { ok: false, error: errors[0] ?? 'The engine returned no results.', runs: 0 };
-  const dps = ok.map(r => r.avgDps);
+  // Health a weapon passive took off the target before the fight (Enkaus) counts again, over a run's kill time.
+  const dps = ok.map(r => {
+    const t = parseTtk(r.ttk);
+    return removedHp > 0 && t.killed && t.seconds > 0 && t.seconds <= maxTime ? r.avgDps + removedHp / Math.min(t.seconds, maxTime) : r.avgDps;
+  });
   const ttks = ok.map(r => parseTtk(r.ttk));
   const killed = ttks.filter(t => t.killed);
   return {
@@ -790,13 +884,15 @@ export function makePin(build, summary, id, mode = null, data = null) {
     config: {
       weaponName: build.weaponName,
       modeName: build.modeName,
-      mods: build.mods.map(m => (m ? { name: m.name, rank: m.rank } : null)),
+      // A riven keeps its rolls, so an edited riven reads as a change (pinChanges).
+      mods: build.mods.map(m => (m?.isRiven ? JSON.parse(JSON.stringify(m)) : m ? { name: m.name, rank: m.rank, ...(m.stacks != null ? { stacks: m.stacks } : {}) } : null)),
       arcanes: (build.arcanes ?? []).map(a => (a ? { name: a.name, rank: a.rank, ...(a.options ? { options: { ...a.options } } : {}) } : null)),
       enemy: { preset, level, steelPath: Boolean(steelPath), faction, headshot: Boolean(headshot), hp, armor, shields, overguard },
       simTime: build.simTime,
       // Left out while empty, so pins made before external buffs existed compare equal.
       ...(build.externalBuffs?.length ? { externalBuffs: build.externalBuffs.map(b => ({ ...b, text: buffLine(b, data) })) } : {}),
       ...(build.externalStatuses?.length ? { externalStatuses: build.externalStatuses.map(s => ({ ...s })) } : {}),
+      ...weaponOptionsOf(build),
     },
   };
 }
@@ -836,6 +932,13 @@ export function pinChanges(pin, baseline) {
     else if (before.get(name) !== rank) out.push(`${name} R${before.get(name)}→R${rank}`);
   }
   for (const [name] of before) if (!after.has(name)) out.push(`−${name}`);
+  // The same riven with other rolls or disposition: "Braton Riven Mod edited" (a rank change is listed above).
+  const rivensOf = list => new Map((list ?? []).filter(isRiven).map(m => [m.name, m]));
+  const rivAfter = rivensOf(b.mods);
+  for (const [name, x] of rivensOf(a.mods)) {
+    const y = rivAfter.get(name);
+    if (y && !sameRivenContent(x, y, { rank: false })) out.push(`${name} edited`);
+  }
   const arcanesOf = list => new Map((list ?? []).filter(Boolean).map(x => [x.name, x]));
   const arcBefore = arcanesOf(a.arcanes);
   const arcAfter = arcanesOf(b.arcanes);

@@ -81,7 +81,7 @@ function useHonesty() {
   const mods = useApp(s => s.build.mods);
   const incarnon = useApp(s => isIncarnonMode(s.build.modeName));
   const entries = [...partialMap.entries()].filter(([name]) => mods.some(m => m?.name === name));
-  const engineOnly = mods.filter(m => m && hasNoStats(ctx, m.name)).map(m => m.name);
+  const engineOnly = mods.filter(m => m && !m.isRiven && hasNoStats(ctx, m.name)).map(m => m.name);
   const arcaneNotes = (stats?.arcaneNotes ?? []).filter(n => n.level !== 'inactive');
   // External buffs this app does not simulate (melee, AoE, Hall of Mirrors, ...), kept on the build.
   const externalNotes = stats?.externalNotes ?? [];

@@ -3,6 +3,7 @@
 import { maxRank } from '../shared/mods.js';
 import { slotDrain } from '../shared/capacity.js';
 import { isArcaneCompatible } from '../shared/arcanes.js';
+import { RIVEN_CAPACITY_MOD } from '../shared/rivens.js';
 import { arcaneIndexOf, fitsSlot, isArcaneSlot, slotBlockReason, slotLabel } from './model.js';
 
 export const MOD_MIME = 'application/x-uf-mod';
@@ -27,14 +28,15 @@ export function dropInfo(ctx, build, drag, slot, polarities) {
     };
   }
   if (isArcaneSlot(slot)) return { accept: false, reason: "Mods don't go in the arcane slot", drain: null, effect: null, label: '' };
-  const mod = ctx.index.byName.get(drag.name);
+  // A riven moved between slots drains as its pseudo-mod (it is not in data.mods).
+  const mod = ctx.index.byName.get(drag.name) ?? (Number.isInteger(drag.from) && build.mods[drag.from]?.isRiven ? RIVEN_CAPACITY_MOD : null);
   if (!mod) return { accept: false, reason: 'Unknown mod', drain: null, effect: null, label: '' };
   const from = Number.isInteger(drag.from) ? drag.from : null;
   if (from === slot) return { accept: false, reason: null, drain: null, effect: null, label: '' };
   const target = build.mods[slot];
   let reason = null;
   if (from != null) {
-    if (!fitsSlot(ctx, drag.name, slot)) reason = 'Not an Exilus mod';
+    if (!fitsSlot(ctx, drag.name, slot)) reason = build.mods[from]?.isRiven ? "Rivens can't go in the Exilus slot" : 'Not an Exilus mod';
     else if (target && !fitsSlot(ctx, target.name, from)) reason = `${target.name} can't move to ${slotLabel(from).toLowerCase()}`;
   } else {
     reason = slotBlockReason(ctx, build, slot, drag.name);

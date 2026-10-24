@@ -16,9 +16,11 @@ import {
 } from '../model.js';
 import { arcaneSlotCount } from '../../shared/arcanes.js';
 import { isKitgun } from '../../shared/mods.js';
+import { modeLabel } from '../../shared/fire-modes.js';
 import { previewSlots } from '../dnd.js';
 import { ArcaneSlot, ModSlot } from './SlotCard.jsx';
 import { AutoBuildButton } from './AutoBuildDialog.jsx';
+import { WeaponOptions } from './WeaponOptions.jsx';
 
 const useStyles = makeStyles({
   loadout: {
@@ -178,19 +180,28 @@ function WeaponPicker() {
 
 /**
  * Fire mode beside the weapon: plain text with one mode, a segmented radio toolbar with 2-3 (one tab stop), a
- * dropdown with more.
+ * dropdown with more. Combined modes (an impact with its explosion, from the data) are listed after the weapon's own.
  */
 function FireMode() {
   const styles = useStyles();
   const { stats } = useDerived();
-  const modeName = useApp(s => s.build?.modeName ?? '');
-  const modes = stats?.selectable ?? [];
+  // The pick that runs: the build's, or the default when its pick can no longer run (a combined mode's augment left).
+  const picked = useApp(s => s.build?.modeName ?? '');
+  const modeName = stats?.modeId || picked;
+  const modes = (stats?.choices ?? []).map(c => ({ mode_name: c.id, label: c.label, combined: c.combined }));
   const hint = isIncarnonMode(modeName) ? INCARNON_NOTE : undefined;
-  if (modes.length <= 1) return <Body1 className={styles.modeText}>{modes[0]?.mode_name ?? 'Normal Attack'}</Body1>;
+  if (modes.length <= 1) return <Body1 className={styles.modeText}>{modes[0]?.label ?? 'Normal Attack'}</Body1>;
   if (modes.length > 3) {
+    const own = modes.filter(m => !m.combined);
+    const combined = modes.filter(m => m.combined);
     return (
-      <Dropdown size="medium" aria-label="Fire mode" value={modeName} selectedOptions={[modeName]} onOptionSelect={(_e, d) => actions.setMode(d.optionValue)} style={{ minWidth: 160 }}>
-        {modes.map(m => <Option key={m.mode_name} value={m.mode_name}>{m.mode_name}</Option>)}
+      <Dropdown size="medium" aria-label="Fire mode" value={modeLabel(modeName)} selectedOptions={[modeName]} onOptionSelect={(_e, d) => actions.setMode(d.optionValue)} style={{ minWidth: 160 }} data-testid="fire-mode">
+        {own.map(m => <Option key={m.mode_name} value={m.mode_name}>{m.label}</Option>)}
+        {combined.length ? (
+          <OptionGroup label="Combined">
+            {combined.map(m => <Option key={m.mode_name} value={m.mode_name} text={m.label}>{m.label}</Option>)}
+          </OptionGroup>
+        ) : null}
       </Dropdown>
     );
   }
@@ -203,7 +214,7 @@ function FireMode() {
       data-testid="fire-mode"
     >
       {modes.map(m => (
-        <ToolbarRadioButton key={m.mode_name} name="mode" value={m.mode_name} appearance="subtle">{m.mode_name}</ToolbarRadioButton>
+        <ToolbarRadioButton key={m.mode_name} name="mode" value={m.mode_name} appearance="subtle">{m.label}</ToolbarRadioButton>
       ))}
     </Toolbar>
   );
@@ -387,6 +398,7 @@ export function Loadout({ layout, width, height }) {
       <div className={styles.header}>
         <WeaponPicker />
         <FireMode />
+        <WeaponOptions />
         <span className={styles.spacer} />
         {oneLine ? <CapacityMeter compact /> : null}
       </div>

@@ -11,6 +11,7 @@ import { DeleteRegular, DismissRegular, MoreHorizontalRegular, TargetRegular } f
 import { actions } from '../controller.js';
 import { useApp } from '../hooks.js';
 import { compareRows } from '../model.js';
+import { modeLabel } from '../../shared/fire-modes.js';
 import { fmtInt, fmtNum, fmtPct } from '../format.js';
 import { DeltaText } from './common.jsx';
 
@@ -51,7 +52,7 @@ export function CompareDialog() {
       renderCell: r => (
         <span className={styles.nameStack}>
           <span className={styles.text} title={r.buildName}>{r.baseline ? <><strong>Baseline</strong> · </> : null}{r.buildName}</span>
-          <Caption1 className={styles.sub} title={`${r.weaponName} · ${r.modeName}`}>{r.weaponName} · {r.modeName}</Caption1>
+          <Caption1 className={styles.sub} title={`${r.weaponName} · ${modeLabel(r.modeName)}`}>{r.weaponName} · {modeLabel(r.modeName)}</Caption1>
         </span>
       ),
     }),

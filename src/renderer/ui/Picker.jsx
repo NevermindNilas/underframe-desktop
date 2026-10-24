@@ -34,6 +34,7 @@ import { fmtInt, fmtSignedPct } from '../format.js';
 import { ARCANE_MIME, MOD_MIME } from '../dnd.js';
 import { hasNoStats, unmodeledStats } from './common.jsx';
 import { GalleryCard, COMPAT_LABELS, fitFor } from './GalleryCard.jsx';
+import { RivenPickerRow } from './RivenPickerRow.jsx';
 import { ArtImage, PolarityGlyph, polarityName, useCards, useTextCards } from './art.jsx';
 
 const GAP = CARD_GAP;
@@ -353,6 +354,7 @@ function PickerBar({ view, gallery, open, count }) {
       {open ? (
         <>
           <FiltersPopover gallery={gallery} view={view} count={count} />
+          <RivenPickerRow view={view} />
           <Caption1 className={styles.count} role="status" aria-live="off" data-testid="gallery-count">
             {count ? `${count} ${noun}` : `No ${isArcanes ? 'arcanes' : 'mods'}`}
           </Caption1>

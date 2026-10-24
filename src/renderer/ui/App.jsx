@@ -16,6 +16,7 @@ import { Dialogs } from './Dialogs.jsx';
 import { CompareDialog } from './CompareDialog.jsx';
 import { BuffsDialog } from './BuffsDialog.jsx';
 import { AutoBuildDialog } from './AutoBuildDialog.jsx';
+import { RivenDialog } from './RivenDialog.jsx';
 import { Announcer } from './Announcer.jsx';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { useShortcuts } from './shortcuts.js';
@@ -111,6 +112,7 @@ function Shell() {
       <CompareDialog />
       <BuffsDialog />
       <AutoBuildDialog />
+      <RivenDialog />
       <Announcer />
     </div>
   );

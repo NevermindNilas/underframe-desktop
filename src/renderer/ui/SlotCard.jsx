@@ -7,11 +7,11 @@ import { useState } from 'react';
 import {
   Body1Strong, Button, Caption1, Caption1Strong, Field, Menu, MenuDivider, MenuGroup, MenuGroupHeader,
   MenuItem, MenuItemRadio, MenuList, MenuPopover, MenuTrigger, Popover, PopoverSurface, PopoverTrigger, ProgressBar,
-  SpinButton, Tooltip, makeStyles, mergeClasses, tokens,
+  SpinButton, Switch, Tooltip, makeStyles, mergeClasses, tokens,
 } from '@fluentui/react-components';
 import {
-  AddRegular, ArrowDownRegular, ArrowSwapRegular, ArrowUpRegular, CircleHalfFillRegular, DeleteRegular, DiamondRegular, DismissRegular,
-  InfoRegular, MoreHorizontalRegular, ProhibitedRegular, SparkleRegular, SubtractRegular,
+  AddRegular, ArrowDownRegular, ArrowSwapRegular, ArrowUpRegular, BookmarkOffRegular, BookmarkRegular, CircleHalfFillRegular, DeleteRegular,
+  DiamondRegular, DismissRegular, EditRegular, InfoRegular, LayerRegular, MoreHorizontalRegular, ProhibitedRegular, SparkleRegular, SubtractRegular,
 } from '@fluentui/react-icons';
 import { actions, announce, focusLater, store } from '../controller.js';
 
@@ -20,7 +20,9 @@ import { EXILUS_SLOT, arcaneFocusId, arcaneIndexOf, arcaneSlotId, isArcaneSlot, 
 import { maxRank, modEffectSummary } from '../../shared/mods.js';
 import { SLOT_POLARITIES } from '../../shared/capacity.js';
 import { arcaneControls, arcaneMaxRank, arcaneStacksText, arcaneSummary, arcaneSupport, arcanesFor } from '../../shared/arcanes.js';
+import { modConditionalControls, modConditionalSummary, modStacksOf, modStacksText } from '../../shared/conditional-mods.js';
 import { modRarityFrame } from '../../shared/card-assets.js';
+import { RIVEN_CAPACITY_MOD, RIVEN_MAX_RANK, canTakeRiven, isRiven, rivenLines, rivenShortName, rivenSlotBlockReason } from '../../shared/rivens.js';
 import { ARCANE_MIME, MOD_MIME, dropInfo } from '../dnd.js';
 import { hasNoStats } from './common.jsx';
 import { ArtImage, OVERLAY, PolarityGlyph, RARITY_TOKEN, polarityName, useCards, useTextCards } from './art.jsx';
@@ -97,6 +99,8 @@ const useStyles = makeStyles({
     WebkitBoxOrient: 'vertical',
     overflow: 'hidden',
   },
+  // A riven's text card: its stat lines, one per line, as many as the slot's height allows.
+  rivenLine: { color: tokens.colorNeutralForeground2, lineHeight: '16px', maxWidth: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   art: { position: 'absolute', inset: 0 },
   frame: {
     position: 'absolute',
@@ -140,6 +144,20 @@ const useStyles = makeStyles({
     pointerEvents: 'none', fontSize: '14px',
     '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', border: '1px solid CanvasText' },
   },
+  // A conditional mod's stacks (Galvanized: "×5"; a one-stack conditional: On / Off), top left after the honesty glyph:
+  // the hover strip covers the bottom, and this stays reachable while it shows.
+  stacksChip: {
+    position: 'absolute', left: '4px', top: '4px', height: '24px', minWidth: '24px', padding: '0 6px', display: 'inline-flex',
+    alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: tokens.borderRadiusMedium, cursor: 'pointer',
+    backgroundColor: OVERLAY.scrim, color: OVERLAY.neutral, fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums',
+    ':hover': { backgroundColor: 'rgba(0,0,0,0.85)' },
+    ':focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`, outlineOffset: '1px' },
+    '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'ButtonFace', color: 'ButtonText', border: '1px solid ButtonText' },
+  },
+  stacksChipShifted: { left: '30px' },
+  stacksChipCompact: { top: '2px', left: '2px', padding: '0 4px' },
+  stacksChipCompactShifted: { left: '22px' },
+  stacksOff: { color: 'rgba(255,255,255,0.6)', textDecorationLine: 'line-through' },
   // At rest the rank shows only below max ("3/5"), as shadowed text on the art (no plate); −/+ come with the hover strip.
   rankPlate: {
     position: 'absolute', right: '12px', bottom: '14%', pointerEvents: 'none', lineHeight: '16px',
@@ -500,8 +518,37 @@ function PolarityMenuItems({ slot }) {
   );
 }
 
+/**
+ * The riven items of a slot menu (docs/port-rivens.md 11.5): Edit riven… and the library entry on a riven slot; New
+ * riven… on another general slot of a weapon that takes rivens (disabled, with the reason, when another slot has one).
+ */
+function RivenMenuItems({ slot, value }) {
+  const ctx = useApp(s => s.ctx);
+  const build = useApp(s => s.build);
+  const inLibrary = useApp(s => Boolean(value?.id && s.rivenLibrary.rivens.some(r => r.id === value.id)));
+  const weapon = ctx.weaponByName.get(build.weaponName);
+  if (slot === EXILUS_SLOT || !canTakeRiven(weapon)) return null;
+  // Opened after the menu has closed and given focus back, so the dialog returns focus to the slot.
+  if (isRiven(value)) {
+    return (
+      <>
+        <MenuItem icon={<EditRegular />} onClick={() => setTimeout(() => actions.openRivenDialog(slot), 0)}>Edit riven…</MenuItem>
+        {inLibrary
+          ? <MenuItem icon={<BookmarkOffRegular />} onClick={() => actions.removeLibraryRiven(value.id)}>Remove from your rivens</MenuItem>
+          : <MenuItem icon={<BookmarkRegular />} onClick={() => actions.saveRivenToLibrary(slot)}>Save to your rivens</MenuItem>}
+      </>
+    );
+  }
+  const reason = rivenSlotBlockReason(build, weapon, slot);
+  return (
+    <MenuItem icon={<EditRegular />} disabled={Boolean(reason)} secondaryContent={reason ?? undefined} onClick={() => setTimeout(() => actions.openRivenDialog(slot), 0)}>
+      New riven…
+    </MenuItem>
+  );
+}
+
 /** The slot menu (More button, Shift+F10, context menu). */
-function SlotMenu({ slot, value, open, setOpen, here, running, trigger }) {
+function SlotMenu({ slot, value, open, setOpen, here, running, trigger, onStacks = null, stacksText = null }) {
   const polarity = useDerived().capacity?.polarities?.[slot] ?? null;
   return (
     <Menu
@@ -520,6 +567,11 @@ function SlotMenu({ slot, value, open, setOpen, here, running, trigger }) {
           <MenuItem icon={<SparkleRegular />} disabled={running} secondaryContent="Shift+Enter" onClick={() => actions.startSweep(slot)}>
             {value ? 'Find a better mod' : 'Find best mod'}
           </MenuItem>
+          {value && onStacks ? (
+            // Opens after the menu has closed and given focus back, so the popover keeps it.
+            <MenuItem icon={<LayerRegular />} onClick={() => setTimeout(onStacks, 0)}>Stacks ({stacksText})…</MenuItem>
+          ) : null}
+          <RivenMenuItems slot={slot} value={value} />
           {value ? <MenuItem icon={<DeleteRegular />} secondaryContent="Del" disabled={here} onClick={() => actions.clearSlot(slot)}>Remove</MenuItem> : null}
           <MenuDivider />
           <PolarityMenuItems slot={slot} />
@@ -544,6 +596,7 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
   const [hover, setHover] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [stacksOpen, setStacksOpen] = useState(false);
   const drop = useDropTarget(slot);
   const active = useActiveDrag();
   const info = active ? dropInfo(ctx, store.get().build, active, slot, capacity?.polarities) : null;
@@ -621,21 +674,30 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
     );
   }
 
-  const mod = ctx.index.byName.get(value.name);
-  const max = maxRank(mod);
-  const effect = modEffectSummary(mod, value.rank);
+  // A riven is not in data.mods: a text card with its stat lines, Omni drain 10 + rank, ranks 0-8 (docs/port-rivens.md).
+  const riven = isRiven(value);
+  const mod = riven ? RIVEN_CAPACITY_MOD : ctx.index.byName.get(value.name);
+  const max = riven ? RIVEN_MAX_RANK : maxRank(mod);
+  const lines = riven ? rivenLines(value) : null;
+  const shownName = riven ? rivenShortName(value) : value.name;
+  const effect = riven ? lines.join(', ') : modEffectSummary(mod, value.rank);
   const d = capacity?.perSlot?.[slot] ?? { drain: (Number(mod?.['Base Drain']) || 0) + value.rank, base: (Number(mod?.['Base Drain']) || 0) + value.rank, effect: 'neutral' };
-  const rarity = RARITY_OF_FRAME[modRarityFrame(mod)] ?? 'common';
+  const rarity = riven ? 'legendary' : RARITY_OF_FRAME[modRarityFrame(mod)] ?? 'common';
   const partial = partialMap.get(value.name) ?? [];
-  const noStats = hasNoStats(ctx, value.name);
-  const imageUrl = !textCards ? cards?.modCompactUrl(value.name) : null;
+  const noStats = !riven && hasNoStats(ctx, value.name);
+  const imageUrl = !textCards && !riven ? cards?.modCompactUrl(value.name) : null;
+  // Stat lines that fit under the name (the text card's padding and the name take about 62 px).
+  const rivenRows = riven ? Math.max(0, Math.min(lines.length, Math.floor((height - 62) / 16))) : 0;
   // The target slot of the Picker shows just its ring and name: its actions would cover the name of the mod being
   // replaced in the small strip slot.
   const showActions = (hover || focusWithin) && !(picking && selected) && !here && !active;
   // While a mod is dragged or picked up, every slot that accepts it shows what it would drain there (spec 6.2).
   const shownDrain = info && info.accept && info.drain != null && active?.from !== slot ? info : null;
-  const accName = `${label}${polarityPart}: ${value.name}, rank ${value.rank} of ${max}, drain ${d.drain}${MATCH_TEXT[d.effect] ? `, ${MATCH_TEXT[d.effect]}` : ''}`;
+  const accName = `${label}${polarityPart}: ${shownName}, rank ${value.rank} of ${max}, drain ${d.drain}${MATCH_TEXT[d.effect] ? `, ${MATCH_TEXT[d.effect]}` : ''}${riven && lines.length ? `: ${effect}` : ''}`;
   const descId = `slot-desc-${slot}`;
+  const stacks = modConditionalControls(value.name, ctx.data);
+  const stacksText = stacks ? modStacksText(value, ctx.data) : null;
+  const stacksDesc = stacks ? `Assumes ${stacksText.toLowerCase()}: ${modConditionalSummary(value, ctx.data).total}` : null;
 
   return (
     <div
@@ -650,8 +712,9 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
     >
       <span className={mergeClasses(styles.face, shownDrain && !over && styles.faceDimmed)} aria-hidden="true">
         <span className={styles.textCard}>
-          <Body1Strong className={styles.textName}>{value.name}</Body1Strong>
-          {height >= 80 ? <Caption1 className={styles.textEffect}>{effect}</Caption1> : null}
+          <Body1Strong className={styles.textName}>{shownName}</Body1Strong>
+          {riven ? lines.slice(0, rivenRows).map(l => <Caption1 key={l} className={styles.rivenLine}>{l}</Caption1>)
+            : height >= 80 ? <Caption1 className={styles.textEffect}>{effect}</Caption1> : null}
         </span>
         {imageUrl ? <span className={styles.art}><ArtImage src={imageUrl} backdrop="#161b20" /></span> : null}
       </span>
@@ -670,7 +733,7 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
           if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') { e.preventDefault(); setMenuOpen(true); }
         }}
       />
-      <span id={descId} hidden>{[effect, honestyText(partial, noStats), selected ? 'Selected' : ''].filter(Boolean).join('. ')}</span>
+      <span id={descId} hidden>{[riven ? null : effect, stacksDesc, honestyText(partial, noStats), selected ? 'Selected' : ''].filter(Boolean).join('. ')}</span>
       {/* The card art carries its own rarity frame; only a text card gets ours. */}
       {imageUrl ? null : <span className={styles.frame} style={{ boxShadow: `inset 0 0 0 2px ${RARITY_TOKEN[rarity]}` }} aria-hidden="true" />}
       <DrainPlate
@@ -684,6 +747,9 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
         compact={height < 70}
       />
       <HonestyGlyph partial={partial} noStats={noStats} compact={height < 70} />
+      {stacks && !here ? (
+        <ModStacks slot={slot} value={value} controls={stacks} open={stacksOpen} setOpen={setStacksOpen} compact={height < 70} shifted={Boolean(partial.length || noStats)} />
+      ) : null}
       {showActions ? (
         <SlotMenu
           slot={slot}
@@ -692,12 +758,14 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
           setOpen={setMenuOpen}
           here={here}
           running={running}
+          onStacks={stacks ? () => setStacksOpen(true) : null}
+          stacksText={stacksText}
           trigger={(
             <Button appearance="transparent" className={styles.more} icon={<MoreHorizontalRegular />} aria-label={`More options for ${label.toLowerCase()}`} tabIndex={-1} />
           )}
         />
       ) : menuOpen ? (
-        <SlotMenu slot={slot} value={value} open={menuOpen} setOpen={setMenuOpen} here={here} running={running} trigger={<span />} />
+        <SlotMenu slot={slot} value={value} open={menuOpen} setOpen={setMenuOpen} here={here} running={running} onStacks={stacks ? () => setStacksOpen(true) : null} stacksText={stacksText} trigger={<span />} />
       ) : null}
       {showActions ? (
         <div className={mergeClasses(styles.strip, styles.stripActive)}>
@@ -726,6 +794,63 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
       {here ? <SweepBusy slot={slot} /> : null}
       {dropHint}
     </div>
+  );
+}
+
+/**
+ * A conditional mod's stacks: a chip on the card ("×5", or On / Off for a one-stack conditional) that opens a popover
+ * to set them. Also opened from the slot menu (Stacks…), the keyboard route: the chip is not a tab stop of its own.
+ */
+function ModStacks({ slot, value, controls, open, setOpen, compact, shifted }) {
+  const styles = useStyles();
+  const ctx = useApp(s => s.ctx);
+  const n = modStacksOf(value, ctx.data);
+  const summary = modConditionalSummary(value, ctx.data);
+  const toggle = controls.max === 1;
+  const trigger = controls.trigger ? `${controls.trigger}${controls.condition ? `, ${controls.condition.toLowerCase()}` : ''}` : null;
+  const state = toggle ? (n ? 'conditional on' : 'conditional off') : `${n} of ${controls.max} stacks`;
+  return (
+    <Popover open={open} onOpenChange={(_e, d) => setOpen(d.open)} withArrow positioning="below-start" trapFocus>
+      <PopoverTrigger disableButtonEnhancement>
+        <button
+          type="button"
+          tabIndex={-1}
+          className={mergeClasses(styles.stacksChip, shifted && styles.stacksChipShifted, compact && styles.stacksChipCompact, compact && shifted && styles.stacksChipCompactShifted)}
+          data-testid={`slot-stacks-${slot}`}
+          aria-label={`${value.name}: ${state}${trigger ? ` (${trigger})` : ''}. Change`}
+          title={`${toggle ? (n ? 'Active' : 'Inactive') : `${n} of ${controls.max} stacks`}${trigger ? ` (${trigger})` : ''}: ${summary.total}`}
+        >
+          <Caption1Strong className={toggle && !n ? styles.stacksOff : undefined} style={toggle && !n ? undefined : { color: 'inherit' }}>
+            {toggle ? (n ? 'On' : 'Off') : `×${n}`}
+          </Caption1Strong>
+        </button>
+      </PopoverTrigger>
+      <PopoverSurface className={styles.popover} aria-label={`${value.name} conditional`} data-testid="mod-stacks-popover">
+        <Body1Strong>{value.name}</Body1Strong>
+        {toggle ? (
+          <Switch
+            checked={n > 0}
+            label={n ? 'Active' : 'Inactive'}
+            data-testid="mod-stacks-switch"
+            onChange={(_e, d) => actions.setModStacks(slot, d.checked ? 1 : 0)}
+          />
+        ) : (
+          <Field label="Stacks" hint={`0 to ${controls.max}. Each stack: ${summary.perStack}.`}>
+            <SpinButton
+              value={n}
+              min={0}
+              max={controls.max}
+              data-testid="mod-stacks-input"
+              onChange={(_e, d) => {
+                const v = d.value ?? Number(d.displayValue);
+                if (Number.isFinite(v)) actions.setModStacks(slot, v);
+              }}
+            />
+          </Field>
+        )}
+        <Caption1>Adds {summary.total}{trigger ? ` (trigger: ${trigger})` : ''}. A newly equipped mod starts at max stacks, as on underframe.site.</Caption1>
+      </PopoverSurface>
+    </Popover>
   );
 }
 

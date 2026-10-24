@@ -9,13 +9,17 @@
 
 import { DAMAGE_TYPE_BY_DT, PHYSICAL, combineElements } from './damage.js';
 import { conflictingMod, indexMods, isModCompatible, maxRank, statValue } from './mods.js';
-import { collectModifiers, computeWeaponStats } from './stats.js';
+import { collectModifiers, computeWeaponStats, effectiveProgenitor } from './stats.js';
 import { buildEngineInput } from './engine-input.js';
 import {
   arcaneRequirementMet, arcaneMaxRank, arcaneSlotCount, arcanesFor, defaultArcaneOptions, normalizeArcaneEntry, resolveArcanes,
 } from './arcanes.js';
-import { reduceExternalBuffs } from './external-buffs.js';
+import { mergeExternalTotals, reduceExternalBuffs } from './external-buffs.js';
+import { indexConditionalMods, modConditionalControls, modStacksText, resolveModConditionals } from './conditional-mods.js';
+import { baseModeName, combinedModes, modesFired, resolveModeId } from './fire-modes.js';
+import { resolveWeaponPassives } from './weapon-passives.js';
 import { capacityOf, effectiveSlotPolarities, innateSlotPolarities, normalizePolarity, slotDrain } from './capacity.js';
+import { RIVEN_CAPACITY_MOD } from './rivens.js';
 import {
   ELEMENT_PRESETS, blockedByElementalBlacklist, metricOf, modStatFamilies, parseTargetList, runsFor, targetLabel,
 } from './auto-build-settings.js';
@@ -73,31 +77,24 @@ export function addsElement(mod) {
 
 const isAugment = mod => !GENERIC_COMPAT.has(mod?.['Compat Name'] ?? '');
 
-/** Bows whose arrows explode: Split Flights does nothing on them (the site's list). */
-const SPLIT_FLIGHTS_AOE_BOWS = new Set(['Artemis Bow', 'Attica', 'Kuva Bramma', 'Lenz', 'Prisma Lenz', 'Nagantaka', 'Nagantaka Prime', 'Nataruk', 'Proboscis Cernos', 'Zhuge', 'Zhuge Prime']);
-const BEAM_BY_NAME = new Set(['Flux Rifle', 'Synapse', 'Coda Synapse', 'Lizzie']);
-const isAoeMode = m => /aoe$/i.test(String(m?.projectile_type ?? '').trim());
-
-/** Sinister Reach fits beam primaries only (judged on the first native, non-AoE mode; either Panthera mode). */
-function sinisterReachFits(weapon) {
-  if (weapon?.type !== 'Primary') return false;
-  const modes = (weapon.fire_modes ?? []).filter(m => m && !/incarnon/i.test(m.mode_name ?? '') && !isAoeMode(m));
-  const beam = m => Boolean(m && !isAoeMode(m) && (m.is_beam || (BEAM_BY_NAME.has(weapon.name) && m.mode_name === 'Normal Attack' && m.projectile_type === 'Hit-Scan')));
-  return ['Panthera', 'Panthera Prime'].includes(weapon.name) ? modes.some(beam) : beam(modes[0]);
-}
+/** Conditional bonus types that add an element: the site forces augments with one of these into every run. */
+const ELEMENT_BONUS = /^(Heat|Cold|Electricity|Gas|Toxin|Viral|Magnetic|Radiation|Corrosive|Blast) Damage$/;
 
 /**
- * A mod a run may put on the weapon: the app's compatibility plus the site's extra rules the picker does not apply
- * (Semi-Cannonade mods need a weapon that takes them, Split Flights and Sinister Reach have their own limits).
+ * The weapon's own augments whose conditional part adds an element (Biotic Rounds: Viral and Magnetic), which the site
+ * places in every run (docs/port-auto-build.md 4.0.3).
  */
-export function fitsWeapon(mod, weapon) {
-  if (!isModCompatible(mod, weapon)) return false;
-  const name = mod['Local Name'];
-  if (/^Semi-.+ Cannonade$/.test(name) && weapon.cannonade_compatible !== true) return false;
-  if (name === 'Split Flights' && SPLIT_FLIGHTS_AOE_BOWS.has(weapon.name)) return false;
-  if (name === 'Sinister Reach' && !sinisterReachFits(weapon)) return false;
-  return true;
+export function elementalAugments(env) {
+  const entries = indexConditionalMods(env.data);
+  return env.data.mods.filter(m => {
+    if (!isAugment(m) || !fitsWeapon(m, env.weapon)) return false;
+    return (entries.get(m['Local Name']) ?? []).some(e => [e.details, ...(e.details?.bonuses ?? []), ...(e.buffs ?? [])]
+      .some(b => ELEMENT_BONUS.test(String(b?.bonus_type ?? b?.type ?? '').trim())));
+  });
 }
+
+/** A mod a run may put on the weapon: the app's compatibility (mods.js), the picker's own. */
+export const fitsWeapon = isModCompatible;
 
 /**
  * Everything a run shares. `build` is the working build (weapon, mode, target, buffs, statuses, polarities,
@@ -105,10 +102,15 @@ export function fitsWeapon(mod, weapon) {
  */
 export function createAutoBuildEnv({ data, weapon, reload = null, build, enemy, settings, index = null }) {
   const idx = index ?? indexMods(data);
-  const modeName = build.modeName;
-  const mode = weapon.fire_modes.find(m => m.mode_name === modeName) ?? weapon.fire_modes[0];
-  const children = [mode.child_mode ?? []].flat().map(n => weapon.fire_modes.find(m => m.mode_name === n)).filter(Boolean);
-  const buffs = build.externalBuffs ?? [];
+  // The pick (a combined "custom:" mode runs its parts); its first part stands for it, its parts make the signature.
+  const modeName = resolveModeId(data, weapon, build.mods, build.modeName) || weapon.fire_modes[0]?.mode_name;
+  const baseName = baseModeName(data, weapon, modeName);
+  const mode = weapon.fire_modes.find(m => m.mode_name === baseName) ?? weapon.fire_modes[0];
+  const children = modesFired(data, weapon, modeName).filter(n => n !== mode.mode_name)
+    .map(n => weapon.fire_modes.find(m => m.mode_name === n)).filter(Boolean);
+  // The weapon's passives and options count in every candidate, as in the Readout (sim.js buildStats).
+  const passives = resolveWeaponPassives(data, weapon, build, { accurateAmmo: Boolean(reload) });
+  const buffs = [...(build.externalBuffs ?? []), ...passives.buffs];
   const external = buffs.length ? reduceExternalBuffs(buffs, data, weapon).totals : null;
   const innate = innateSlotPolarities(data, weapon);
   const env = {
@@ -116,14 +118,18 @@ export function createAutoBuildEnv({ data, weapon, reload = null, build, enemy, 
     index: idx,
     weapon,
     reload,
-    enemy,
-    modeName: mode.mode_name,
+    enemy: { ...enemy, hp: enemy.hp * passives.enemyHpScale },
+    passiveTotals: passives.totals,
+    modeName,
+    baseModeName: mode.mode_name,
     mode,
+    customFireModes: combinedModes(data, weapon),
     signatureModes: [mode, ...children],
     external,
     externalBuffs: buffs,
     // Statuses already on the target: a Cold status lets Primary Frostbite build stacks (as on the site).
-    externalStatuses: build.externalStatuses ?? [],
+    externalStatuses: mergeStatuses(build.externalStatuses ?? [], passives.statuses),
+    progenitor: effectiveProgenitor(weapon, build.progenitor),
     settings,
     metric: metricOf(settings),
     exilus: new Set(data.exilusMods ?? []),
@@ -201,6 +207,23 @@ export function elementSignature(env, mods) {
   return sig;
 }
 
+/** A candidate's conditional mods at their stacks, with the weapon's passives. */
+function conditionalsFor(env, mods) {
+  const c = resolveModConditionals(mods, env.weapon, env.data);
+  return { ...c, totals: mergeExternalTotals(c.totals, env.passiveTotals ?? null) };
+}
+
+/** Statuses on the target: `a`, plus `b` (a higher stack count wins). */
+function mergeStatuses(a, b) {
+  const out = a.map(s => ({ ...s }));
+  for (const s of b ?? []) {
+    const at = out.findIndex(o => o.type === s.type);
+    if (at < 0) out.push({ ...s });
+    else out[at] = { ...out[at], stacks: Math.max(out[at].stacks, s.stacks) };
+  }
+  return out;
+}
+
 /** The selected mode's final damage types with the build's buffs (what element-gated arcanes need). */
 function finalTypes(env, mods) {
   const key = modsKey(mods);
@@ -208,9 +231,9 @@ function finalTypes(env, mods) {
   if (hit) return hit;
   const { modes } = computeWeaponStats(env.weapon, mods, {
     modsByName: env.index.byName, reload: env.reload, targetFaction: env.enemy.faction, arcanes: null, external: env.external,
-    externalStatuses: env.externalStatuses,
+    externalStatuses: env.externalStatuses, conditionals: conditionalsFor(env, mods), progenitor: env.progenitor, data: env.data,
   });
-  const types = (modes.find(x => x.mode_name === env.modeName) ?? modes[0])?.finalDamageTypes ?? {};
+  const types = (modes.find(x => x.mode_name === env.baseModeName) ?? modes[0])?.finalDamageTypes ?? {};
   if (env.caches.types.size > 20000) env.caches.types.clear();
   env.caches.types.set(key, types);
   return types;
@@ -289,7 +312,7 @@ export function capacityPlan(env, mods) {
   const budget = Math.max(0, maxForma - formaOf(effective));
   const drainAt = (i, p) => {
     const s = mods[i];
-    const mod = s && env.index.byName.get(s.name);
+    const mod = s && (s.isRiven ? RIVEN_CAPACITY_MOD : env.index.byName.get(s.name));
     return mod ? slotDrain(mod, s.rank, p).drain : 0;
   };
   for (let guard = 0; guard <= SLOT_COUNT; guard++) {
@@ -363,18 +386,20 @@ export function singleShotMode(m) {
  */
 export function candidateInput(env, cand, { maxTime, appStateRef = 1, plain = false } = {}) {
   const arcanes = resolveArcanes(cand.arcanes ?? [], env.weapon, env.data);
+  // Conditional mods count at the stacks their slot assumes: max for a candidate, as underframe.site scores them.
+  const conditionals = conditionalsFor(env, cand.mods);
   const { modes } = computeWeaponStats(env.weapon, cand.mods, {
     modsByName: env.index.byName, reload: env.reload, targetFaction: env.enemy.faction, arcanes, external: env.external,
-    externalStatuses: env.externalStatuses,
+    externalStatuses: env.externalStatuses, conditionals, progenitor: env.progenitor, data: env.data,
   });
   let weaponStats = modes;
   const s = env.settings;
   if (!plain && s.buildForFloor) weaponStats = weaponStats.map(floorMode);
   if (!plain && s.buildForSingleHit) weaponStats = weaponStats.map(singleShotMode);
   const input = buildEngineInput({
-    weapon: env.weapon, modSlots: cand.mods, weaponStats, enemy: env.enemy, modeName: env.modeName,
+    weapon: env.weapon, modSlots: cand.mods, weaponStats, enemy: env.enemy, modeName: env.modeName, customFireModes: env.customFireModes,
     maxTime: maxTime ?? s.simulationTimeSeconds, appStateRef, reload: env.reload, debugLog: false, arcanes, external: env.external,
-    externalStatuses: env.externalStatuses,
+    externalStatuses: env.externalStatuses, conditionals,
   });
   if (!plain && s.buildForSingleHit) input.simulationParams.forceSingleShot = true;
   return JSON.stringify(input);
@@ -382,7 +407,7 @@ export function candidateInput(env, cand, { maxTime, appStateRef = 1, plain = fa
 
 // ---------- the pipeline ----------
 
-const modsKey = mods => mods.map(s => (s ? `${s.name}:${s.rank}` : '')).join(',');
+const modsKey = mods => mods.map(s => (s ? `${s.name}:${s.rank}${s.stacks != null ? `x${s.stacks}` : ''}` : '')).join(',');
 const namesIn = mods => mods.filter(Boolean).map(s => s.name);
 const fmt = n => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '—');
 const permutations = list => (list.length <= 1 ? [list] : list.flatMap((x, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map(p => [x, ...p])));
@@ -456,8 +481,25 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
     return s.costControlEnabled && half !== max ? [max, half] : [max];
   };
 
-  // 0. Preparation: filled slots and a filled arcane slot are locks; the Exilus slot is never filled.
-  const startMods = Array.from({ length: SLOT_COUNT }, (_, i) => (start.mods?.[i] ? { name: start.mods[i].name, rank: start.mods[i].rank } : null));
+  // 0. Preparation: filled slots (with their stacks) and a filled arcane slot are locks; the Exilus slot is never filled.
+  const startMods = Array.from({ length: SLOT_COUNT }, (_, i) => {
+    const m = start.mods?.[i];
+    // A kept riven stays whole: its stats are the slot (docs/port-rivens.md).
+    if (m?.isRiven) return m;
+    return m ? { name: m.name, rank: m.rank, ...(m.stacks != null ? { stacks: m.stacks } : {}) } : null;
+  });
+  // The weapon's elemental augments (Biotic Rounds) go in at max rank and are kept, as on the site (step 4.0.3).
+  const forced = [];
+  for (const mod of elementalAugments(env)) {
+    const name = mod['Local Name'];
+    const at = startMods.findIndex(m => m?.name === name);
+    if (at >= 0) { startMods[at] = { ...startMods[at], rank: maxRank(mod) }; continue; }
+    const free = GENERAL_SLOTS.find(i => !startMods[i]);
+    if (free == null || conflicts(name, startMods)) { log.push(`No free slot for ${name}; it was not forced in.`); continue; }
+    startMods[free] = { name, rank: maxRank(mod) };
+    forced.push(`${name} (slot ${free + 1})`);
+  }
+  if (forced.length) log.push(`Placed the weapon's elemental augment${forced.length > 1 ? 's' : ''}: ${forced.join(', ')}.`);
   const arcaneSlots = arcaneSlotCount(env.weapon);
   const startArcanes = Array.from({ length: arcaneSlots }, (_, i) => start.arcanes?.[i] ?? null);
   const locked = new Set(GENERAL_SLOTS.filter(i => startMods[i]));
@@ -763,10 +805,21 @@ export function nothingToFill(build, weapon, keep, keepArcane) {
   return mods && arcane;
 }
 
-/** Names of the conditional mods (data.conditionals: Galvanized and the like) among `mods`, each once, in slot order. */
-export function conditionalModNames(data, mods) {
-  const conditional = new Set([...(data?.conditionals?.galvanized_mods ?? []), ...(data?.conditionals?.misc_mods ?? [])].map(c => c.name));
-  return [...new Set((mods ?? []).filter(m => m && conditional.has(m.name)).map(m => m.name))];
+/**
+ * The conditional mods (Galvanized and the like) among `mods` and the stacks they were scored at, each once, in slot
+ * order: "Galvanized Chamber at 5 stacks (On Kill)", "Laser Sight on (On Headshot)".
+ */
+export function conditionalModStacks(data, mods) {
+  const seen = new Set();
+  const out = [];
+  for (const m of mods ?? []) {
+    const c = m && !seen.has(m.name) ? modConditionalControls(m.name, data) : null;
+    if (!c) continue;
+    seen.add(m.name);
+    const text = modStacksText(m, data);
+    out.push(`${m.name} ${c.max === 1 ? text.toLowerCase() : `at ${text}`}${c.trigger ? ` (${c.trigger})` : ''}`);
+  }
+  return out;
 }
 
 /** Same stats at max rank (type, element and value), for the conditional -> plain swap. */

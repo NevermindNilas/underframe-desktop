@@ -3,9 +3,10 @@
 // view shows the numbers the Readout will show). Runs inside the Auto Build worker; node tests run it directly.
 import { createContext, resolveEnemy, SIM_SEEDS } from './model.js';
 import { buildAppState } from '../shared/engine-input.js';
+import { targetStatusesOf } from './sim.js';
 import { normalizeAutoBuildSettings } from '../shared/auto-build-settings.js';
 import {
-  candidateInput, capacityPlan, chunkJobs, conditionalModNames, createAutoBuildEnv, formaChanges, meansOf, runAutoBuild,
+  candidateInput, capacityPlan, chunkJobs, conditionalModStacks, createAutoBuildEnv, formaChanges, meansOf, runAutoBuild,
 } from '../shared/auto-build.js';
 
 /** What the pool needs before the search: the app state each worker caches (with the build's target statuses). */
@@ -13,7 +14,7 @@ export function appStateFor(data, build) {
   const ctx = createContext(data);
   const weapon = ctx.weaponByName.get(build.weaponName);
   if (!weapon) throw new Error(`Unknown weapon: ${build.weaponName}`);
-  return { ctx, weapon, appState: JSON.stringify(buildAppState(data, weapon, { externalStatuses: build.externalStatuses ?? [] })) };
+  return { ctx, weapon, appState: JSON.stringify(buildAppState(data, weapon, { externalStatuses: targetStatusesOf(ctx, build) })) };
 }
 
 /**
@@ -69,8 +70,8 @@ export async function runAutoBuildJob({ ctx, build, start, settings: rawSettings
     arcanes: result.arcanes,
     formaPlan: plan ? formaChanges(env, plan) : [],
     planCapacity: plan ? { used: plan.used, capacity: plan.capacity, added: plan.added } : null,
-    // Conditional mods (Galvanized and the like) are scored on their base stats: the stats model has no stacks.
-    conditionalMods: conditionalModNames(data, result.mods),
+    // Conditional mods (Galvanized and the like) are scored at the stacks their slots assume (max for new ones).
+    conditionalMods: conditionalModStacks(data, result.mods),
     score: result.score,
     metric: result.metric,
     runs: result.runs,

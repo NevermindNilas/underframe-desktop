@@ -40,16 +40,75 @@ export function statValue(stat, rank) {
   return (Number(stat?.Value) || 0) * (r + 1);
 }
 
-/** Weapon-specific mods name the weapon family in Compat Name ("Sobek" fits "Kuva Sobek"). */
-function namesWeapon(compat, weaponName) {
-  return new RegExp(`(^|\\s)${compat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`, 'i').test(weaponName);
+// ---------- compatibility (the game's rules, as underframe.site applies them) ----------
+
+/** Compat Names that name a weapon class; any other Compat Name is a weapon's own augment. Plural forms count too. */
+const CLASS_COMPAT = new Set([
+  'PRIMARY', 'RIFLE', 'SHOTGUN', 'SECONDARY', 'PISTOL', 'MELEE', 'ARCHGUN', 'ARCHMELEE', 'AMP', 'ASSAULT SAW', 'BAYONET',
+  'BLADE AND WHIP', 'BOW', 'CLAW', 'CLAWS', 'DAGGER', 'DUAL DAGGER', 'DUAL NIKANA', 'DUAL PISTOL', 'DUAL SWORD', 'FIST',
+  'GLAIVE', 'GUNBLADE', 'HAMMER', 'HEAVY BLADE', 'HEAVY SCYTHE', 'HOUND', 'MACHETE', 'NIKANA', 'NUNCHAKU', 'POLEARM',
+  'RAPIER', 'SCYTHE', 'SNIPER', 'SPARRING', 'SPEARGUN', 'STAFF', 'SWORD', 'SWORD AND SHIELD', 'THROWN', 'TOME', 'TONFA',
+  'TWO-HANDED NIKANA', 'WARFAN', 'WHIP', 'ZAW',
+]);
+const singular = v => String(v ?? '').toUpperCase().replace(/S$/, '');
+/** Bows whose arrows explode: Split Flights does nothing on them. */
+const SPLIT_FLIGHTS_AOE_BOWS = new Set(['Artemis Bow', 'Attica', 'Kuva Bramma', 'Lenz', 'Prisma Lenz', 'Nagantaka', 'Nagantaka Prime', 'Nataruk', 'Proboscis Cernos', 'Zhuge', 'Zhuge Prime']);
+/** Beams the data lists as plain hit-scan. */
+const BEAM_BY_NAME = new Set(['Flux Rifle', 'Synapse', 'Coda Synapse', 'Lizzie']);
+const isAoeMode = m => /aoe$/i.test(String(m?.projectile_type ?? '').trim());
+
+/** The family a weapon's augments and rivens name ("Kuva Sobek" -> "Sobek", "MK1-Braton" -> "Braton"). */
+export function weaponFamily(name) {
+  return String(name ?? '').trim()
+    .replace(/^MK1-/, '')
+    .replace(/^(?:Kuva|Tenet|Coda|Dex|Prisma|Carmine|Mara|Ceti|Synoid|Secura|Rakta|Sancti|Telos|Vaykor) /, '')
+    .replace(/ (?:Prime|Vandal|Wraith|Dex|Umbra|Prisma|Carmine)$/, '')
+    .trim();
 }
 
+/** Sinister Reach fits beam primaries only (judged on the first native, non-AoE mode; either Panthera mode). */
+function sinisterReachFits(weapon) {
+  if (weapon?.type !== 'Primary') return false;
+  const modes = (weapon.fire_modes ?? []).filter(m => m && !/incarnon/i.test(m.mode_name ?? '') && !isAoeMode(m));
+  const beam = m => Boolean(m && !isAoeMode(m) && (m.is_beam || (BEAM_BY_NAME.has(weapon.name) && m.mode_name === 'Normal Attack' && m.projectile_type === 'Hit-Scan')));
+  return ['Panthera', 'Panthera Prime'].includes(weapon.name) ? modes.some(beam) : beam(modes[0]);
+}
+
+/**
+ * The game's tags: a mod that excludes one of the weapon's tags (Cannonade on a weapon without a semi-auto tag,
+ * Combustion Beam off beams) does not fit; one that requires tags fits only a weapon with one of them.
+ */
+function rejectedByTags(mod, weapon) {
+  const tags = weapon.compatibility_tags ?? [];
+  if ((mod.incompatibility_tags ?? []).some(t => tags.includes(t))) return true;
+  const required = mod.compatibility_tags ?? [];
+  return Array.isArray(weapon.mod_compatibility_types) && required.length > 0 && !required.some(t => tags.includes(t));
+}
+
+/** Whether a mod can be equipped on a gun. */
 export function isModCompatible(mod, weapon) {
-  if (!mod || !weapon || mod.Type !== String(weapon.type).toUpperCase()) return false;
-  const compat = mod['Compat Name'] ?? '';
-  const tags = COMPAT_TAGS[`${weapon.type}/${weapon.subtype}`] ?? [];
-  return tags.includes(compat) || namesWeapon(compat, weapon.name);
+  if (!mod || !weapon) return false;
+  if (rejectedByTags(mod, weapon)) return false;
+  if (String(mod.Type ?? '').toUpperCase().replace(/-/g, '') !== String(weapon.type ?? '').toUpperCase().replace(/-/g, '')) return false;
+  const name = mod['Local Name'];
+  if (name === 'Sinister Reach') return sinisterReachFits(weapon);
+  if (/^Semi-.+ Cannonade$/.test(name) && weapon.cannonade_compatible !== true) return false;
+  if (name === 'Split Flights' && SPLIT_FLIGHTS_AOE_BOWS.has(weapon.name)) return false;
+  const raw = String(mod['Compat Name'] ?? '').toUpperCase();
+  if (!raw) return false;
+  // Mods that list the weapon classes they fit (Adhesive Blast: launchers) go by that list.
+  if (Array.isArray(weapon.mod_compatibility_types) && Array.isArray(mod.native_item_compatibility)) {
+    return mod.native_item_compatibility.some(t => weapon.mod_compatibility_types.includes(t));
+  }
+  const compat = singular(raw);
+  // A weapon's own augment fits that weapon and its variants.
+  if (!CLASS_COMPAT.has(compat)) return String(weapon.name).toUpperCase() === raw || weaponFamily(weapon.name).toUpperCase() === raw;
+  const type = String(weapon.type).toUpperCase();
+  const sub = String(weapon.subtype ?? '').toUpperCase();
+  // Rifle mods fit every primary but shotguns (Tainted Mag only real rifles); pistol mods every secondary.
+  if (type === 'PRIMARY' && sub !== 'SHOTGUN' && compat === 'RIFLE' && name !== 'Tainted Mag') return true;
+  if (type === 'SECONDARY' && compat === 'PISTOL') return true;
+  return compat === type || compat === sub || compat === singular(sub);
 }
 
 /** Index the data tables the editor needs. */

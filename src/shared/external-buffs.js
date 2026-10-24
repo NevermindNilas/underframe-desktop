@@ -393,8 +393,12 @@ export function maxStacksFor(type, buffs) {
 
 // ---------- reduction (buff list -> totals) ----------
 
-/** The totals object with the site's defaults; only fields this app's guns use. */
-function emptyTotals() {
+/**
+ * The totals object with the site's defaults; only fields this app's guns use. Conditional mods (conditional-mods.js)
+ * reduce into the same shape: their status damage, punch through, magazine, Condition Overload, extra elements
+ * (viralDamage, ...), Sentient Barrage's charged-shot crit and Wild Frenzy's fire rate.
+ */
+export function emptyExternalTotals() {
   return {
     damage: 0, multishot: 0, critChance: 0, critDamage: 0, statusChance: 0, flatStatusChance: 0, flatCritChance: 0,
     nonRadialFlatCritChance: 0, flatCritDamage: 0, fireRate: 0, reload: 0, externalReloadReduction: 0,
@@ -410,7 +414,43 @@ function emptyTotals() {
     lashProc: null, xatasProc: null, valenceFormationProc: null, arcsphereProc: null, overdriveDamage: null,
     heatInheritPercentOverride: null, heatInheritFactionOverride: null,
     infiniteAmmo: false, covenantActive: false, hydroidEnhancedCorrosive: false,
+    statusDamage: 0, punchThrough: 0, magazine: 0, conditionOverload: 0,
+    viralDamage: 0, magneticDamage: 0, gasDamage: 0, toxinDamage: 0, heatDamage: 0,
+    sentientBarrageCritChance: 0, sentientBarrageCritDamage: 0, fireRateOverride: null, fireRateOverrideLocked: false,
+    // Weapon passives and options (weapon-passives.js): their stats, the engine's named passives and exalted procs.
+    headshotCritChance: 0, multiplicativeFireRate: 1, headshotInstantReloadChance: 0, followThrough: 0, blastRadius: 0,
+    flatBlastRadius: 0, cedoPassive: false, cernosPrimeHeadshot: false, enkausPassive: false, gotvaPassive: false,
+    sagekPrimePassive: false, cantarePassive: false, komorexZoomBonus: false, exaltedProc: null,
   };
+}
+const emptyTotals = emptyExternalTotals;
+
+/** Fields that multiply (default 1), and the one that takes the larger value. */
+const PRODUCT_FIELDS = new Set(['pageflightMultiplier', 'multiplicativeCritChance', 'multiplicativeCritDamage', 'sonarMultiplier', 'multiplicativeFireRate']);
+
+/**
+ * Two totals objects as one (external buffs and conditional mods): sums add, multipliers multiply, lists join,
+ * flags combine, Corrosive's max stacks takes the larger, and a set value from `b` (a proc, an override) wins.
+ */
+export function mergeExternalTotals(a, b) {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const base = emptyTotals();
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    const cur = out[k];
+    if (Array.isArray(v)) out[k] = [...(cur ?? []), ...v.map(x => (typeof x === 'object' ? { ...x } : x))];
+    else if (typeof v === 'boolean') out[k] = Boolean(cur) || v;
+    else if (k === 'corrosiveMaxStacks') out[k] = Math.max(cur ?? 10, v);
+    else if (PRODUCT_FIELDS.has(k)) out[k] = (cur ?? 1) * v;
+    else if (typeof v === 'number' && typeof base[k] === 'number') out[k] = (cur ?? 0) + v;
+    else if (v && typeof v === 'object') {
+      const m = { ...(cur ?? {}) };
+      for (const [kk, vv] of Object.entries(v)) m[kk] = typeof m[kk] === 'number' && typeof vv === 'number' ? m[kk] + vv : vv;
+      out[k] = m;
+    } else if (v != null) out[k] = v;
+  }
+  return out;
 }
 
 const SUM_FIELDS = {
@@ -567,6 +607,13 @@ export function externalModifiers(totals) {
   put('weakPointDamage', totals.weakPointDamage);
   put('weakPointCritChance', totals.weakPointCritChance);
   put('ammoEfficiency', totals.ammoEfficiency);
+  put('statusDamage', totals.statusDamage);
+  put('punchThrough', totals.punchThrough);
+  put('magazine', totals.magazine);
+  put('conditionOverload', totals.conditionOverload);
+  put('followThrough', totals.followThrough);
+  put('blastRadius', totals.blastRadius);
+  put('flatBlastRadius', totals.flatBlastRadius);
   if (totals.ipsImpact || totals.ipsPuncture || totals.ipsSlash) {
     out.physical = { Impact: totals.ipsImpact, Puncture: totals.ipsPuncture, Slash: totals.ipsSlash };
   }
