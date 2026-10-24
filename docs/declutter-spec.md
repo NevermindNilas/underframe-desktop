@@ -46,9 +46,9 @@ Risk is similar for both, since each moves every component. Flow's two-state mod
 ├─ LOADOUT (task: build) ──────────────────────┬─ READOUT (task: read) ────────┤
 │ Weapon ▾   [Normal | Incarnon]               │ Average DPS        Time to kill│
 │ Capacity ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 54 / 60  ⋯        │ 21,705 ▼2.1%          1.71 s   │
-│ [Exilus] (Arcane)                            │ vs Elite Crewman · L145 Change │
-│ [ 1 ][ 2 ][ 3 ][ 4 ]                         │ ◐ Partially simulated · Details│
-│ [ 5 ][ 6 ][ 7 ][ 8 ]                         │ Weapon stats  Base Modded Chg  │
+│ [ 1 ][ 2 ][ 3 ][ 4 ] (Arcane)                │ vs Elite Crewman · L145 Change │
+│ [ 5 ][ 6 ][ 7 ][ 8 ] [Exilus]                │ ◐ Partially simulated · Details│
+│                                              │ Weapon stats  Base Modded Chg  │
 │ 🔍 Add or swap mods…                  Ctrl+F │ … all 11 rows, never scrolled  │
 │ ┌ lower area: follows the task ───────────┐  │ ▬▬▬ damage by type + legend    │
 │ │ rest:    Why this DPS (charts, notes)   │  │ Compare · 2 pinned  Pin  Expand│
@@ -68,7 +68,7 @@ Risk is similar for both, since each moves every component. Flow's two-state mod
 | State | Entered by | Slots | Lower area | Readout |
 | --- | --- | --- | --- | --- |
 | **Rest** | Esc, Done, equipping into a *filled* slot, filling the last empty slot, opening a build that has mods | 4-column grid at full size (199x100 at 1440) | **Why this DPS**: segments Health over time · Damage by hit · Notes | Stats: Base / Modded / Change |
-| **Picking** | Clicking a slot or pressing Enter on it; Ctrl+1…9 and Ctrl+Shift+9; Ctrl+F; typing in the search bar; a stat row; Shift+Enter or ✦ on a slot (Best mod); a new or empty build | 5x2 strip: Exilus with slots 1-4, Arcane with slots 5-8; the target slot is ringed | **Picker**: Mods · Arcanes · Best for slot N, the search, Filters, the count, Done; then the card grid (the only scroll region) | Hovering or focusing a card turns the Change column into **If equipped** |
+| **Picking** | Clicking a slot or pressing Enter on it; Ctrl+1…9 and Ctrl+Shift+9; Ctrl+F; typing in the search bar; a stat row; Shift+Enter or ✦ on a slot (Best mod); a new or empty build | The same 5x2 block, smaller: slots 1-4 then Arcane, slots 5-8 then Exilus; the target slot is ringed | **Picker**: Mods · Arcanes · Best for slot N, the search, Filters, the count, Done; then the card grid (the only scroll region) | Hovering or focusing a card turns the Change column into **If equipped** |
 
 Picker rules:
 - **Filling empty slots:** equipping moves the selection on to the next empty slot and stays in Picking. With no slot selected, cards go to the first empty slot. Filling the last empty slot returns to Rest.
@@ -93,12 +93,12 @@ Picker rules:
 │ Braton Prime ▾   [Normal Attack | Incarnon Form]   │ Average DPS                    Time to kill │
 │ Capacity ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 54 / 60   ⋯    │ 21,705  ▼ 2.1%                    1.71 s   │
 │                                                    │ vs Elite Crewman · L145 · Corpus  Change   ⋯│
-│ ┌Vile Prec.┐   ╭─arcane─╮                          │ ◐ Partially simulated: 1 mod · Details     │
-│ └─────5/5──┘   ╰5/5 · 12 stacks                     │ Weapon stats        Base  Modded   Change  │
-│ ┌Serration─┐┌Split Ch.─┐┌Point Str.┐┌Vital Sen.┐    │ Damage              35.0  1,006.3   ×28.8  │
-│ └───10/10──┘└─────5/5──┘└─────3/5──┘└─────2/5──┘    │ Crit chance          12%     21%    +75%   │
-│ ┌Infected ─┐┌Stormbr.──┐┌Hellfire──┐┌Cryo R.───┐    │ Crit multiplier     2.0×    3.2×    +60%   │
-│ └─────5/5──┘└─────5/5──┘└─────5/5──┘└─────5/5──┘    │ Status chance        26%     26%      —    │
+│ ┌Serration┐┌Split Ch┐┌Point St┐┌Vital Se┐ ╭arcane╮ │ ◐ Partially simulated: 1 mod · Details     │
+│ └─────────┘└────────┘└────────┘└────────┘ 12 stacks │ Weapon stats        Base  Modded   Change  │
+│ ┌Infected ┐┌Stormbr.┐┌Hellfire┐┌Cryo R. ┐┌Vile P.┐  │ Damage              35.0  1,006.3   ×28.8  │
+│ └─────────┘└────────┘└────────┘└────────┘└────────┘ │ Crit chance          12%     21%    +75%   │
+│                                                     │ Crit multiplier     2.0×    3.2×    +60%   │
+│                                                     │ Status chance        26%     26%      —    │
 │ 🔍 Add or swap mods: select a slot or type   Ctrl+F │ Status duration      6 s     6 s      —    │
 │ Why this DPS  [Health over time | Damage by hit | Notes] │ Multishot       1.0     1.9    +90%   │
 │ ┌ enemy health step chart, about 830 x 250 ─────┐  │ Fire rate          9.58/s  7.28/s  −24%    │
@@ -122,8 +122,8 @@ Picker rules:
 ├────────────────── LOADOUT 880 ─────────────────────┬──────────── READOUT 560 ────────────────────┤
 │ Braton Prime ▾  [Normal | Incarnon]                │ Average DPS 21,705 ▼2.1%     TTK 1.71 s     │
 │ Capacity ▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬ 54 / 60  ⋯          │ vs Elite Crewman · L145 · Corpus  Change   │
-│ [Exilus][ S1 ][ S2 ][▣S3▣][ S4 ]   156x78         │ Weapon stats    Base  Modded  If equipped  │
-│ (Arcane)[ S5 ][ S6 ][ S7 ][ S8 ]                  │ Crit chance      12%    21%       39%  ◀   │
+│ [ S1 ][ S2 ][▣S3▣][ S4 ](Arcane)  156x78          │ Weapon stats    Base  Modded  If equipped  │
+│ [ S5 ][ S6 ][ S7 ][ S8 ][Exilus]                  │ Crit chance      12%    21%       39%  ◀   │
 │ Mods  Arcanes  Best │🔍 Search mods for slot 3 … │ Filters │ 98 mods │ Done │ … all rows …        │
 │ ┌──┐┌──┐┌──┐┌──┐┌──┐┌──┐  cards about 116 wide,   │ damage by type                             │
 │ └──┘└──┘└──┘└──┘└──┘└──┘  6 columns x 3 rows full │ Compare …                                  │
@@ -150,9 +150,9 @@ Picker rules:
 ├──────────── LOADOUT 640 ─────────────┬───────── READOUT 460 ─────────────────┤
 │ Braton Prime ▾  [Normal|Incarnon]    │ Average DPS 21,705 ▼2.1%   TTK 1.71 s│
 │ Capacity ▬▬▬▬▬▬▬▬▬▬▬▬▬ 54/60 ⋯       │ vs Elite Crewman · L145 Change   ⋯     │
-│ [Exilus] (Arcane)          143x72    │ ◐ Partially simulated · Details      │
-│ [S1 ][S2 ][S3 ][S4 ]                 │ Weapon stats   Base  Modded  Change  │
-│ [S5 ][S6 ][S7 ][S8 ]                 │ … all 11 rows at 24 px, no scroll …  │
+│ [S1 ][S2 ][S3 ][S4 ](Arc)   112x56   │ ◐ Partially simulated · Details      │
+│ [S5 ][S6 ][S7 ][S8 ][Exi]            │ Weapon stats   Base  Modded  Change  │
+│                                      │ … all 11 rows at 24 px, no scroll …  │
 │ 🔍 Add or swap mods…          Ctrl+F │ ▬▬▬ damage by type, legend 2 columns │
 │ Why this DPS [Health|Hits|Notes]     │ Compare · 2 pinned     Pin  Expand   │
 │ ┌ chart 600 x 170 ───────────────┐   │ (pinned rows; more scroll below)     │

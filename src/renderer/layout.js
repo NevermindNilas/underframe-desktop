@@ -43,16 +43,17 @@ export function layoutFor(width, height = 900) {
 
 /**
  * Slot card size (2:1) for a Loadout of `width` x `height` (spec 1.1).
- * - rest: a 4-column grid; the slot block (special row + two rows) takes at most half the height, up to 280 px wide
- *   slots on large windows (the arsenal, not the chart, takes the extra room).
- * - picking: a 5x2 strip (Exilus or Arcane, then 4 slots per row) that takes at most 30% of the height.
- * - stacked: 2 columns under 600 px.
+ * Both states are a 5x2 block: slots 1-4 then Arcane, slots 5-8 then Exilus (the special slots on the right).
+ * - rest: the block takes at most half the height, up to 280 px wide slots on large windows (the arsenal, not the
+ *   chart, takes the extra room).
+ * - picking: the block takes at most 30% of the height.
+ * - stacked: 2 columns under 600 px (3 while picking).
  * Returns { width, height, columns }.
  */
 export function slotSizeFor({ width, height, gutter, picking = false, stacked = false }) {
   const inner = Math.max(0, width - 2 * gutter);
   if (stacked) {
-    const columns = picking ? (inner < 600 ? 3 : 5) : inner < 600 ? 2 : 4;
+    const columns = inner < 600 ? (picking ? 3 : 2) : 5;
     const w = Math.min(240, Math.max(100, Math.floor((inner - (columns - 1) * SLOT_GAP) / columns)));
     return { width: w, height: Math.round(w / 2), columns };
   }
@@ -62,10 +63,10 @@ export function slotSizeFor({ width, height, gutter, picking = false, stacked = 
     const w = Math.max(100, Math.min(200, Math.floor(Math.min(byWidth, byHeight))));
     return { width: w, height: Math.round(w / 2), columns: 5 };
   }
-  const byWidth = (inner - 3 * SLOT_GAP) / 4;
-  const byHeight = ((0.5 * height - 2 * SLOT_GAP) / 3) * 2;
-  const w = Math.max(120, Math.min(280, Math.floor(Math.min(byWidth, byHeight))));
-  return { width: w, height: Math.round(w / 2), columns: 4 };
+  const byWidth = (inner - 4 * SLOT_GAP) / 5;
+  const byHeight = ((0.5 * height - SLOT_GAP) / 2) * 2;
+  const w = Math.max(100, Math.min(280, Math.floor(Math.min(byWidth, byHeight))));
+  return { width: w, height: Math.round(w / 2), columns: 5 };
 }
 
 /**

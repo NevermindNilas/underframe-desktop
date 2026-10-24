@@ -17,22 +17,22 @@ test('breakpoints: one 48 px top bar, Readout width by window, library inline fr
   assert.equal(layoutFor(960, 540).readoutWidth, null);
 });
 
-test('rest slots: 4 columns at 2:1, large at 1440 and never cramped at 1100', () => {
+test('rest slots: 4 mod columns plus the Arcane/Exilus column at 2:1, never cramped at 1100', () => {
   const at = (w, h) => {
     const l = layoutFor(w, h);
     return slotSizeFor({ width: w - l.readoutWidth, height: l.body, gutter: l.gutter });
   };
   const big = at(1440, 900);
-  assert.equal(big.columns, 4);
+  assert.equal(big.columns, 5);
   assert.equal(big.height, Math.round(big.width / 2));
-  assert.ok(big.width >= 190, `1440: ${big.width}`);
+  assert.ok(big.width >= 150, `1440: ${big.width}`);
   const small = at(1100, 700);
-  assert.ok(small.width >= 140 && small.width <= 150, `1100: ${small.width}`);
-  // The slot block (special row + 2 rows) leaves at least half the Loadout for the lower area.
+  assert.ok(small.width >= 100, `1100: ${small.width}`);
+  // The slot block (2 rows) leaves at least half the Loadout for the lower area.
   for (const [w, h] of [[1100, 700], [1440, 900], [1920, 1080], [1280, 720]]) {
     const l = layoutFor(w, h);
     const s = slotSizeFor({ width: w - l.readoutWidth, height: l.body, gutter: l.gutter });
-    assert.ok(3 * s.height + 24 <= l.body / 2 + 1, `${w}x${h}`);
+    assert.ok(2 * s.height + 12 <= l.body / 2 + 1, `${w}x${h}`);
   }
 });
 

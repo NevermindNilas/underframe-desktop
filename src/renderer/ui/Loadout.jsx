@@ -1,6 +1,6 @@
 // The Loadout (docs/declutter-spec.md 1): notices, the weapon and fire mode, capacity, and the arsenal slots: the
-// Exilus slot, the arcane dome and the 2x4 grid at rest, or a 5x2 strip while picking (the Picker then takes the
-// lower area). It never scrolls; the slot size follows the column's width and height.
+// 2x4 grid with the arcane dome on top of the Exilus slot to its right, larger at rest and smaller while picking (the
+// Picker then takes the lower area). It never scrolls; the slot size follows the column's width and height.
 import { useEffect, useMemo, useState } from 'react';
 import {
   Body1, Button, Caption1, Combobox, Dropdown, Link, Menu, MenuDivider, MenuItem, MenuItemCheckbox, MenuList, MenuPopover,
@@ -307,19 +307,22 @@ function moveBetweenSlots(e) {
   best.el.focus();
 }
 
-/** The slots: the arsenal arrangement at rest, a 5x2 strip while picking (Exilus and Arcane lead the two rows). */
+/**
+ * The slots: slots 1-4 then Arcane, slots 5-8 then Exilus (a kitgun's second arcane beside the first). Narrow stacked
+ * layouts put Arcane and Exilus on a row above the slots.
+ */
 function Slots({ size, picking }) {
   const styles = useStyles();
   const selected = useApp(s => s.selectedSlot);
   const weaponName = useApp(s => s.build?.weaponName);
   const weapon = useApp(s => s.ctx?.weaponByName.get(weaponName));
   const twoArcanes = arcaneSlotCount(weapon) > 1;
-  // One Tab stop for the slot group: the slot last focused (else the selected one, else the Exilus slot).
+  // One Tab stop for the slot group: the slot last focused (else the selected one, else slot 1).
   const [rove, setRove] = useState(null);
   // A slot chosen without focusing it (Ctrl+1-9, a stat row's target) becomes the group's tab stop too, so Tab and
   // Shift+Tab from the Picker reach it.
   useEffect(() => { if (selected != null) setRove(selected); }, [selected]);
-  const current = rove ?? selected ?? EXILUS_SLOT;
+  const current = rove ?? selected ?? 0;
   const onFocusSlot = e => {
     // Only the slot buttons move the tab stop: a control inside a slot (the arcane's stacks) is its own stop, and
     // moving the slot stop to it would leave Tab with no way into the slots.
@@ -343,14 +346,15 @@ function Slots({ size, picking }) {
   const exilus = <div key="exilus" style={w}><ModSlot slot={EXILUS_SLOT} width={size.width} height={size.height} caption="Exilus" tabbable={current === EXILUS_SLOT} /></div>;
   const arcane = <div key="arcane" style={w}><ArcaneSlot width={size.width} height={size.height} tabbable={current === ARCANE_SLOT} /></div>;
   const arcane2 = twoArcanes ? <div key="arcane-1" style={w}><ArcaneSlot index={1} width={size.width} height={size.height} tabbable={current === KITGUN_ARCANE_SLOT} /></div> : null;
-  const columns = picking ? 5 + (twoArcanes ? 1 : 0) : size.columns;
+  const side = size.columns >= 5;
+  const columns = side ? 5 + (twoArcanes ? 1 : 0) : size.columns;
   let children;
-  if (picking) {
-    children = [exilus, ...[0, 1, 2, 3].map(mod), twoArcanes ? <div key="gap" aria-hidden="true" /> : null, arcane, ...[4, 5, 6, 7].map(mod), arcane2];
-  } else if (columns === 4) {
-    children = [exilus, arcane, arcane2, <div key="gap" style={{ gridColumn: `span ${twoArcanes ? 1 : 2}` }} aria-hidden="true" />, ...[0, 1, 2, 3, 4, 5, 6, 7].map(mod)];
+  if (side) {
+    children = [...[0, 1, 2, 3].map(mod), arcane, arcane2, ...[4, 5, 6, 7].map(mod), exilus, twoArcanes ? <div key="gap" aria-hidden="true" /> : null];
   } else {
-    children = [exilus, arcane, ...(twoArcanes ? [arcane2, <div key="gap" aria-hidden="true" />] : []), ...[0, 1, 2, 3, 4, 5, 6, 7].map(mod)];
+    const special = twoArcanes ? 3 : 2;
+    const rest = (columns - (special % columns)) % columns;
+    children = [arcane, arcane2, exilus, rest ? <div key="gap" style={{ gridColumn: `span ${rest}` }} aria-hidden="true" /> : null, ...[0, 1, 2, 3, 4, 5, 6, 7].map(mod)];
   }
   return (
     <div role="group" aria-label="Mod slots" onKeyDown={onKeyDown} onFocus={onFocusSlot} data-testid="slots" data-layout={picking ? 'strip' : 'grid'}>

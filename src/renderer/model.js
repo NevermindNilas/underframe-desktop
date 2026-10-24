@@ -424,8 +424,8 @@ export function swapSlots(ctx, build, a, b) {
   return { ...build, mods };
 }
 
-/** Visual order of the slot area (the special row first): Exilus, Arcane (a kitgun's second arcane), 1-4, 5-8. */
-export const SLOT_ORDER = [EXILUS_SLOT, ARCANE_SLOT, KITGUN_ARCANE_SLOT, 0, 1, 2, 3, 4, 5, 6, 7];
+/** Visual order of the slot area: 1-4, Arcane (a kitgun's second arcane), 5-8, Exilus (the special slots on the right). */
+export const SLOT_ORDER = [0, 1, 2, 3, ARCANE_SLOT, KITGUN_ARCANE_SLOT, 4, 5, 6, 7, EXILUS_SLOT];
 
 
 // ---- Arcanes -------------------------------------------------------------------------------------
