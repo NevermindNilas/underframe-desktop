@@ -1,10 +1,11 @@
-// Global keyboard shortcuts (UX spec 5.5) and F6 pane cycling. Inactive while a dialog is open.
+// Global keyboard shortcuts (UX spec 5.5, docs/arsenal-spec.md 10.2) and F6 pane cycling. Inactive while a dialog is open.
 import { useEffect } from 'react';
 import { actions, focusLater, store } from '../controller.js';
-import { EXILUS_SLOT } from '../model.js';
+import { ARCANE_SLOT, EXILUS_SLOT } from '../model.js';
+import { chooseFile, importFromClipboard, importFromGame } from '../ocr-import.js';
 
 /** Panes in F6 order. Each region carries data-pane="<name>". */
-export const PANES = ['builds', 'toolbar', 'editor', 'results', 'compare'];
+export const PANES = ['builds', 'toolbar', 'stats', 'stage', 'gallery', 'results', 'compare'];
 
 const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -25,7 +26,7 @@ function isTextField(el) {
  */
 export function dialogOpen({ except = null } = {}) {
   const s = store.get();
-  if (s.picker || s.dialog) return true;
+  if (s.ocr || s.dialog) return true;
   return [...document.querySelectorAll('[aria-modal="true"], [role="alertdialog"]')]
     .some(el => isVisible(el) && !(except && el.closest(`[data-pane="${except}"]`)));
 }
@@ -69,6 +70,11 @@ export function useShortcuts() {
         return;
       }
       if (!ready || dialogOpen({ except: 'builds' })) return;
+      if (key === 'Escape' && store.get().pickup) {
+        e.preventDefault();
+        actions.cancelPickup();
+        return;
+      }
       // The overlay builds pane is modal too: build shortcuts (save, undo, new) work from it, but nothing
       // may open another surface behind or on top of it (the picker, compare).
       const overlayPane = dialogOpen();
@@ -100,6 +106,19 @@ export function useShortcuts() {
       } else if (k === 'j') {
         e.preventDefault();
         if (!overlayPane) actions.toggleCompare();
+      } else if (k === 'f' && !e.shiftKey) {
+        e.preventDefault();
+        if (!overlayPane) focusLater('gallery-search');
+      } else if (k === 'i' && !e.shiftKey) {
+        e.preventDefault();
+        if (!overlayPane) chooseFile();
+      } else if (k === 'g' && e.shiftKey) {
+        e.preventDefault();
+        if (!overlayPane) importFromGame();
+      } else if (k === 'v' && !e.shiftKey && !inText) {
+        // Outside text fields Ctrl+V imports a screenshot from the clipboard (inside them it stays a paste).
+        e.preventDefault();
+        if (!overlayPane) importFromClipboard({ fromShortcut: true });
       } else if ((k === 'z' && !e.shiftKey) && !inText) {
         // The newest undoable thing: a delete/unpin/clear whose toast is up, else the last build edit.
         e.preventDefault();
@@ -107,11 +126,15 @@ export function useShortcuts() {
       } else if ((k === 'y' || (k === 'z' && e.shiftKey)) && !inText) {
         e.preventDefault();
         actions.redo();
-      } else if (/^[1-9]$/.test(key) || /^Digit[1-9]$/.test(e.code)) {
-        const n = Number(/^[1-9]$/.test(key) ? key : e.code.slice(5));
+      } else if (/^Digit[1-9]$/.test(e.code) || /^[1-9]$/.test(key)) {
+        const n = Number(/^Digit[1-9]$/.test(e.code) ? e.code.slice(5) : key);
         e.preventDefault();
-        if (!overlayPane) actions.openPicker(n === 9 ? EXILUS_SLOT : n - 1);
+        if (overlayPane) return;
+        // Ctrl+1..8: slots 1-8; Ctrl+9: Exilus; Ctrl+Shift+9: the arcane slot. Focus goes to the gallery search.
+        const slot = n === 9 ? (e.shiftKey ? ARCANE_SLOT : EXILUS_SLOT) : n - 1;
+        actions.selectSlot(slot, { focusGallery: true });
       }
+
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);

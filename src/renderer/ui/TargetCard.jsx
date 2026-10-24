@@ -141,7 +141,14 @@ function NumberField({ label, value, min, max, stepPage, onCommit, disabled, hin
   );
 }
 
-export function TargetCard() {
+/** Card chrome around the target fields, or a plain region inside the results rail's Target tab. */
+function Shell({ bare, className, children }) {
+  return bare
+    ? <div className={className} id="target-card" data-testid="target-card" style={{ display: 'flex', flexDirection: 'column' }}>{children}</div>
+    : <Card appearance="filled" className={className} id="target-card" data-testid="target-card">{children}</Card>;
+}
+
+export function TargetCard({ bare = false }) {
   const styles = useStyles();
   const ctx = useApp(s => s.ctx);
   const enemyCfg = useApp(s => s.build.enemy);
@@ -152,7 +159,7 @@ export function TargetCard() {
   const statsSummary = `${fmtInt(enemy.hp)} health · ${fmtInt(enemy.shields)} shields · ${fmtInt(enemy.armor)} armor${enemy.overguard ? ` · ${fmtInt(enemy.overguard)} overguard` : ''}`;
 
   return (
-    <Card appearance="filled" className={styles.card} id="target-card" data-testid="target-card">
+    <Shell bare={bare} className={styles.card}>
       <CardHeader
         header={<Subtitle2 as="h2">Target</Subtitle2>}
         description={<Caption1 className={styles.summary}>{targetSummary(enemyCfg)}</Caption1>}
@@ -216,8 +223,9 @@ export function TargetCard() {
           </AccordionPanel>
         </AccordionItem>
       </Accordion>
-    </Card>
+    </Shell>
   );
 }
+
 
 const mergeWide = styles => `${styles.wide} ${styles.switches}`;

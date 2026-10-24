@@ -20,6 +20,20 @@ function cleanMod(m) {
   return { name: str(m.name, MAX_NAME), rank: Math.max(0, Math.round(num(m.rank))) };
 }
 
+/** An arcane slot: { name, rank, options?: { stacks?, startingStacks? } } or null. */
+function cleanArcane(a) {
+  if (!isObj(a) || typeof a.name !== 'string' || !a.name) return null;
+  const out = { name: str(a.name, MAX_NAME), rank: Math.max(0, Math.round(num(a.rank))) };
+  if (isObj(a.options)) {
+    const options = {};
+    for (const k of ['stacks', 'startingStacks']) if (Number.isFinite(Number(a.options[k]))) options[k] = Math.round(Number(a.options[k]));
+    if (Object.keys(options).length) out.options = options;
+  }
+  return out;
+}
+
+const POLARITY_CODE = /^AP_[A-Z]{2,12}$/;
+
 function cleanEnemy(e) {
   const o = isObj(e) ? e : {};
   return {
@@ -55,7 +69,14 @@ export function normalizeBuild(build) {
     weaponName: str(build.weaponName, MAX_NAME),
     modeName: str(build.modeName, MAX_NAME),
     mods,
+    // Older builds have none of these three; the renderer fills in the defaults when it reads them.
+    ...(Array.isArray(build.arcanes) ? { arcanes: build.arcanes.slice(0, 4).map(cleanArcane) } : {}),
+    ...(Array.isArray(build.slotPolarities)
+      ? { slotPolarities: Array.from({ length: MOD_SLOTS }, (_, i) => (typeof build.slotPolarities[i] === 'string' && POLARITY_CODE.test(build.slotPolarities[i]) ? build.slotPolarities[i] : null)) }
+      : {}),
+    ...(typeof build.catalyst === 'boolean' ? { catalyst: build.catalyst } : {}),
     enemy: cleanEnemy(build.enemy),
+
     simTime: num(build.simTime, 20),
     notes: str(build.notes),
     updatedAt: typeof build.updatedAt === 'string' ? build.updatedAt : undefined,

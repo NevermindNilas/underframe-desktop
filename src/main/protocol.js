@@ -23,6 +23,11 @@ export const PAGE_CSP = [
 
 export const WORKER_CSP = "default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'";
 
+/** Card images (core/images): nothing may load or run if an SVG is opened as a document. */
+export const IMAGES_PREFIX = '/core/images/';
+export const IMAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+const IMAGE_CACHE = 'public, max-age=86400';
+
 /** Privileges for protocol.registerSchemesAsPrivileged (must run before app ready). */
 export const SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true };
 
@@ -33,12 +38,14 @@ export const SCHEME_PRIVILEGES = { standard: true, secure: true, supportFetchAPI
 const DIR_ROUTES = [
   ['/renderer/', 'build/renderer'],
   ['/core/engine/', 'core/engine'],
+  [IMAGES_PREFIX, 'core/images', new Set(['.webp', '.svg', '.png'])],
 ];
 
 /** Exact URL path -> file relative to the app root. */
 const FILE_ROUTES = new Map([
   ['/core/data/data.json', 'core/data/data.json'],
   ['/core/manifest.json', 'core/manifest.json'],
+  ['/core/images/index.json', 'core/images/index.json'],
 ]);
 
 const CONTENT_TYPES = {
@@ -50,6 +57,7 @@ const CONTENT_TYPES = {
   '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
 };
@@ -81,8 +89,9 @@ export function resolveAppPath(pathname) {
   if (!segments || !segments.length) return null;
   const clean = '/' + segments.join('/');
   if (FILE_ROUTES.has(clean)) return FILE_ROUTES.get(clean);
-  for (const [prefix, dir] of DIR_ROUTES) {
+  for (const [prefix, dir, extensions] of DIR_ROUTES) {
     if (clean.startsWith(prefix) && clean.length > prefix.length) {
+      if (extensions && !extensions.has(path.extname(clean).toLowerCase())) return null;
       return dir + '/' + clean.slice(prefix.length);
     }
   }
@@ -91,7 +100,17 @@ export function resolveAppPath(pathname) {
 
 /** CSP header for a URL pathname: the engine worker gets eval rights, everything else the page policy. */
 export function cspFor(pathname) {
-  return pathname === WORKER_PATH ? WORKER_CSP : PAGE_CSP;
+  if (pathname === WORKER_PATH) return WORKER_CSP;
+  return isImagePath(pathname) ? IMAGE_CSP : PAGE_CSP;
+}
+
+/** Card images change only with the app, so the renderer may cache them; everything else revalidates. */
+export function cacheControlFor(pathname) {
+  return isImagePath(pathname) ? IMAGE_CACHE : 'no-cache';
+}
+
+function isImagePath(pathname) {
+  return pathname.startsWith(IMAGES_PREFIX) && !pathname.endsWith('.json');
 }
 
 export function contentTypeFor(file) {
@@ -128,13 +147,15 @@ export function createAppHandler({ root, read = readFile }) {
     } catch {
       return textResponse(404, 'Not found');
     }
+    // Headers follow the decoded path, so '/core/%69mages/x.svg' gets the image policy too.
+    const clean = '/' + safeSegments(url.pathname).join('/');
     return new Response(request.method === 'HEAD' ? null : body, {
       status: 200,
       headers: {
         'Content-Type': contentTypeFor(rel),
-        'Content-Security-Policy': cspFor(url.pathname),
+        'Content-Security-Policy': cspFor(clean),
         'X-Content-Type-Options': 'nosniff',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': cacheControlFor(clean),
       },
     });
   };

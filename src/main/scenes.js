@@ -14,10 +14,10 @@ export const scenesDir = (env = process.env) => (env.UF_SCENES ? path.resolve(en
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
-/** File-safe scene name. */
+/** File-safe scene name. A name that starts with its own number ("04-gallery-search") keeps it. */
 export function sceneFileName(index, name) {
   const safe = String(name ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'scene';
-  return `${String(index).padStart(2, '0')}-${safe}.png`;
+  return /^\d{2}[a-z]?-/.test(safe) ? `${safe}.png` : `${String(index).padStart(2, '0')}-${safe}.png`;
 }
 
 /** Wire scene mode onto a window. Returns {capture(name), done(list), fail(error)} for the IPC handlers. */
@@ -28,7 +28,8 @@ export function sceneFileName(index, name) {
 async function axeScan(wc, source) {
   const run = `axe.run(document, { resultTypes: ['violations'] }).then(r => r.violations.map(v => ({
     id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.length,
-    targets: v.nodes.slice(0, 5).map(n => n.target.join(' ')),
+    targets: v.nodes.slice(0, 60).map(n => n.target.join(' ')),
+    why: v.nodes.slice(0, 3).map(n => n.failureSummary),
   })))`;
   await wc.executeJavaScriptInIsolatedWorld(4242, [{ code: `${source};
 true` }]);
@@ -87,8 +88,30 @@ export function attachScenes(win, { exit, dir, timeoutMs = SCENES_TIMEOUT_MS, ax
   });
   win.on('closed', () => fail('window closed before the scenes finished'));
 
+  /** Scene mode only: zoom the page (the stacked layout at 200%). */
+  function zoom(factor) {
+    if (finished || win.isDestroyed()) return false;
+    const f = Math.min(3, Math.max(0.5, Number(factor) || 1));
+    wc.setZoomFactor(f);
+    return true;
+  }
+
+  /** Scene mode only: emulate CSS media features through the DevTools protocol (forced colours, reduced motion). */
+  async function emulate(features) {
+    if (finished || win.isDestroyed()) return false;
+    const list = (Array.isArray(features) ? features : [])
+      .filter(f => f && /^[a-z-]{1,40}$/.test(String(f.name)) && /^[a-z-]{0,40}$/.test(String(f.value)))
+      .map(f => ({ name: String(f.name), value: String(f.value) }));
+    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+    await wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: list });
+    return true;
+  }
+
   return {
+    zoom,
+    emulate,
     capture,
+
     done: () => finish(`UF_SCENES_DONE ${JSON.stringify(saved)}`, 0),
     fail,
   };

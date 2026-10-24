@@ -8,12 +8,12 @@ import {
 import { ArrowClockwiseRegular, PinRegular, WarningRegular } from '@fluentui/react-icons';
 import { actions, focusLater } from '../controller.js';
 import { useApp, useDelayedFlag, useDerived } from '../hooks.js';
-import { DURATIONS, INCARNON_NOTE, SIM_SEEDS, isIncarnonMode, resultDelta, ttkText, targetLabel } from '../model.js';
+import { DURATIONS, INCARNON_NOTE, SIM_SEEDS, isIncarnonMode, resultDelta, simErrorText, ttkText, targetLabel } from '../model.js';
 import { fmtInt } from '../format.js';
 import { DISPLAY_FONT } from '../theme.js';
 import { DeltaBadge } from './common.jsx';
 
-export const WHATS_SIMULATED = "Seeded runs of Underframe's engine: crits, status, armor, shields and overguard. Not yet: arcanes, rivens, conditional mods, incarnon bonuses, melee.";
+export const WHATS_SIMULATED = "Seeded runs of Underframe's engine: crits, status, armor, shields, overguard and weapon arcanes (at the stacks you set). Not yet: rivens, conditional mods, incarnon bonuses, melee.";
 
 const useStyles = makeStyles({
   card: {
@@ -59,11 +59,12 @@ function Metric({ label, value, testId, loading }) {
 
 function AggregatePartial() {
   const styles = useStyles();
-  const { partialMap } = useDerived();
+  const { partialMap, stats } = useDerived();
   const mods = useApp(s => s.build.mods);
   const incarnon = useApp(s => isIncarnonMode(s.build.modeName));
   const entries = [...partialMap.entries()].filter(([name]) => mods.some(m => m?.name === name));
-  if (!entries.length && !incarnon) return null;
+  const arcaneNotes = stats?.arcaneNotes ?? [];
+  if (!entries.length && !incarnon && !arcaneNotes.length) return null;
   return (
     <Popover withArrow positioning="below-end">
       <PopoverTrigger disableButtonEnhancement>
@@ -75,7 +76,8 @@ function AggregatePartial() {
         <Body1 as="p" style={{ marginTop: 0 }}>Parts of this build aren't modelled, so its results may be off:</Body1>
         <ul className={styles.list}>
           {incarnon ? <li><Body1>Incarnon form: {INCARNON_NOTE}</Body1></li> : null}
-          {entries.map(([name, stats]) => <li key={name}><Body1>{name}: {stats.join(', ')}</Body1></li>)}
+          {entries.map(([name, list]) => <li key={name}><Body1>{name}: {list.join(', ')}</Body1></li>)}
+          {arcaneNotes.map(n => <li key={`${n.name}-${n.level}`}><Body1>{n.name}: {n.level === 'none' ? 'not simulated. ' : n.level === 'inactive' ? '' : 'partially simulated. '}{n.text}</Body1></li>)}
         </ul>
       </PopoverSurface>
     </Popover>
@@ -120,7 +122,7 @@ export function ResultCard() {
       {error ? (
         <MessageBar intent="error" layout="multiline">
           <MessageBarBody>
-            Couldn't simulate this build. {sim.error}
+            Couldn't simulate this build. {simErrorText(sim.error)}
             {s?.ok ? <Caption1 as="p" className={styles.previous} style={{ display: 'block', margin: '4px 0 0' }}>Last result {fmtInt(s.avgDps)} DPS was for an earlier version of this build.</Caption1> : null}
           </MessageBarBody>
           <MessageBarActions>
@@ -144,9 +146,11 @@ export function ResultCard() {
           as="button"
           inline
           onClick={() => {
+            actions.setResultsTab('target');
             document.getElementById('target-card')?.scrollIntoView({ block: 'nearest' });
             focusLater('target-enemy');
           }}
+
         >
           Change
         </Link>

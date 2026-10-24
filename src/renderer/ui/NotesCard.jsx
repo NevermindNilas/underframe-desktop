@@ -13,7 +13,7 @@ const useStyles = makeStyles({
   counter: { color: tokens.colorNeutralForeground2, fontVariantNumeric: 'tabular-nums' },
 });
 
-export function NotesCard() {
+export function NotesCard({ bare = false }) {
   const styles = useStyles();
   const notes = useApp(s => s.build.notes ?? '');
   const epoch = useApp(s => s.editorEpoch);
@@ -30,8 +30,9 @@ export function NotesCard() {
     el.style.height = `${Math.min(480, Math.max(96, el.scrollHeight + 2))}px`;
   }, [value]);
   return (
-    <Card appearance="filled" className={styles.card}>
+    <Card appearance={bare ? 'subtle' : 'filled'} className={styles.card} style={bare ? { padding: 0, backgroundColor: 'transparent' } : undefined}>
       <CardHeader header={<Subtitle2 as="h2" id="notes-heading">Notes</Subtitle2>} />
+
       <Field
         hint={value.length >= COUNTER_FROM ? <span className={styles.counter}>{value.length.toLocaleString()} of {MAX_NOTES.toLocaleString()} characters</span> : undefined}
       >

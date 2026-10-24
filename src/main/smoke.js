@@ -1,7 +1,7 @@
 // Smoke mode (UF_SMOKE=1): the renderer runs a scripted build and reports back; main prints
 // one `UF_SMOKE_RESULT <json>` line, optionally saves a screenshot, and exits 0 (ok) or 1.
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { captureWindow } from './capture.js';
 
@@ -105,9 +105,21 @@ export function attachSmoke(win, { exit, env = process.env, timeoutMs = SMOKE_TI
     return true;
   }
 
+  /**
+   * The screenshot named by UF_SMOKE_OCR_IMAGE (a local test image, never shipped), so the smoke run can drive real
+   * recognition end to end. Resolves to its bytes, or null when the variable is not set.
+   */
+  async function ocrImage() {
+    const file = env.UF_SMOKE_OCR_IMAGE;
+    if (!file || done) return null;
+    return new Uint8Array(await readFile(path.resolve(file)));
+  }
+
   return {
     report: result => finish(result && typeof result === 'object' ? result : { ok: false, error: 'empty smoke result' }),
     capture,
     click,
+    ocrImage,
   };
+
 }

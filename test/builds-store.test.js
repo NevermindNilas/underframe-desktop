@@ -115,3 +115,22 @@ test('invalid entries are dropped, the original is backed up, valid ones survive
   assert.equal(await readFile(path.join(dir, 'builds.corrupt-1.json'), 'utf8'), original);
   assert.equal(JSON.parse(await readFile(file, 'utf8')).builds.length, 1);
 });
+
+test('arcanes, slot polarities and the Catalyst are kept; older builds stay without them', async t => {
+  const dir = await tempDir(t);
+  const store = createBuildsStore(dir);
+  const saved = await store.save(sample({
+    arcanes: [{ name: 'Primary Merciless', rank: 3, options: { stacks: 6, bogus: 'x' } }, 'junk'],
+    slotPolarities: ['AP_ATTACK', null, 'not a code', 7],
+    catalyst: false,
+  }));
+  assert.deepEqual(saved.arcanes, [{ name: 'Primary Merciless', rank: 3, options: { stacks: 6 } }, null]);
+  assert.deepEqual(saved.slotPolarities, ['AP_ATTACK', null, null, null, null, null, null, null, null]);
+  assert.equal(saved.catalyst, false);
+  const [reread] = await createBuildsStore(dir).list();
+  assert.deepEqual(reread.arcanes, saved.arcanes);
+  const old = await store.save(sample());
+  assert.equal('arcanes' in old, false);
+  assert.equal('slotPolarities' in old, false);
+  assert.equal('catalyst' in old, false);
+});

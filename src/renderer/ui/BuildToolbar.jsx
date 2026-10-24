@@ -5,9 +5,11 @@ import {
   Toolbar, ToolbarButton, ToolbarDivider, ToolbarToggleButton, Tooltip, makeStyles, tokens,
 } from '@fluentui/react-components';
 import {
-  AddRegular, ArrowRedoRegular, ArrowUndoRegular, CheckmarkRegular, CircleSmallFilled, CopyRegular, DeleteRegular,
-  EditRegular, InfoRegular, KeyboardRegular, MoreHorizontalRegular, PanelBottomRegular,
+  AddRegular, ArrowRedoRegular, ArrowUndoRegular, CheckmarkRegular, CircleSmallFilled, ClipboardPasteRegular, CopyRegular,
+  DeleteRegular, DesktopRegular, EditRegular, FolderOpenRegular, InfoRegular, KeyboardRegular, MoreHorizontalRegular,
+  PanelBottomRegular, ScanTextRegular,
 } from '@fluentui/react-icons';
+import { chooseFile, importFromClipboard, importFromGame } from '../ocr-import.js';
 import { actions, focusLater, store } from '../controller.js';
 import { useApp } from '../hooks.js';
 import { canRedo, canUndo } from '../history.js';
@@ -111,8 +113,9 @@ function NameInput({ build, disabled }) {
   );
 }
 
-export function BuildToolbar() {
+export function BuildToolbar({ compactToolbar = false }) {
   const styles = useStyles();
+
   const ready = useApp(s => s.phase === 'ready');
   const build = useApp(s => s.build);
   const snapshot = useApp(s => s.snapshot);
@@ -140,6 +143,30 @@ export function BuildToolbar() {
         <Tooltip content="Redo (Ctrl+Y)" relationship="label">
           <ToolbarButton icon={<ArrowRedoRegular />} disabled={!ready || !canRedo(history)} onClick={() => actions.redo()} />
         </Tooltip>
+        <ToolbarDivider />
+        <Menu positioning="below-end">
+          <MenuTrigger disableButtonEnhancement>
+            {triggerProps => (
+              <Tooltip content="Recognise a build from a screenshot of the arsenal (Ctrl+I)" relationship="description">
+                <SplitButton
+                  appearance="subtle"
+                  icon={<ScanTextRegular />}
+                  menuButton={{ ...triggerProps, 'aria-label': 'More import options', disabled: !ready }}
+                  primaryActionButton={{ onClick: () => chooseFile(), disabled: !ready, 'data-testid': 'ocr-button', 'data-focus-id': 'ocr-button' }}
+                >
+                  {compactToolbar ? 'Import' : 'Import from screenshot'}
+                </SplitButton>
+              </Tooltip>
+            )}
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem icon={<ClipboardPasteRegular />} secondaryContent="Ctrl+V" onClick={() => importFromClipboard()}>Paste screenshot</MenuItem>
+              <MenuItem icon={<DesktopRegular />} secondaryContent="Ctrl+Shift+G" onClick={() => importFromGame()}>Read from game window</MenuItem>
+              <MenuItem icon={<FolderOpenRegular />} secondaryContent="Ctrl+I" onClick={() => chooseFile()}>Choose file…</MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
         <ToolbarDivider />
         <Menu positioning="below-end">
           <MenuTrigger disableButtonEnhancement>

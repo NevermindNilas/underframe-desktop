@@ -1,4 +1,5 @@
 // Assemble the JSON document `calculate_dps_wasm` expects.
+import { arcaneConditionalStats } from './arcanes.js';
 
 /** The large, rarely-changing part of the input. Sent once via cache_app_state and referenced by id. */
 export function buildAppState(data, weapon) {
@@ -27,8 +28,9 @@ export function buildAppState(data, weapon) {
  * @param {number|null} p.appStateRef  id from cache_app_state, or null to inline appState
  * @param {object} [p.appState]    required when appStateRef is null
  * @param {object|null} [p.reload] the weapon's reload_data row; without one the engine fires without reloading
+ * @param {object|null} [p.arcanes] resolveArcanes() output; the same one passed to computeWeaponStats()
  */
-export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true }) {
+export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null }) {
   const input = {
     weaponStats,
     enemyConfig: {
@@ -54,7 +56,8 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       itemName: weapon.name,
       type: weapon.type,
       mods: modSlots.filter(Boolean).map(s => ({ name: s.name, rank: s.rank })),
-      arcanes: [],
+      // Names only: the engine rejects objects here. It applies a few arcanes by name (Deadhead, Cryogenic, ...).
+      arcanes: arcanes?.engineNames ? [...arcanes.engineNames] : [],
     },
     simulationParams: {
       maxTime,
@@ -69,7 +72,16 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       omitDebugLog: !debugLog,
     },
   };
-  if (appStateRef != null) input.appStateRef = appStateRef;
-  else input.appState = appState;
+  if (arcanes?.startingStacks != null) input.simulationParams.secondaryEnervateStartingStacks = arcanes.startingStacks;
+  // Arcane effects the engine reads from conditionalStats (DoT damage, Encumber, Sharpshot, ...), for the simulated mode.
+  const mode = weaponStats.find(m => m.mode_name === modeName) ?? weaponStats[0];
+  const conditionalStats = arcanes ? arcaneConditionalStats(arcanes, mode?.finalDamageTypes) : null;
+  if (appStateRef != null) {
+    input.appStateRef = appStateRef;
+    // A top-level conditionalStats replaces the cached app state's (empty) one.
+    if (conditionalStats) input.conditionalStats = conditionalStats;
+  } else {
+    input.appState = conditionalStats ? { ...appState, conditionalStats } : appState;
+  }
   return input;
 }

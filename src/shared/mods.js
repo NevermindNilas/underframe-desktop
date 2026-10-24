@@ -16,8 +16,15 @@ const COMPAT_TAGS = {
 
 export const SUPPORTED_WEAPON_TYPES = ['Primary', 'Secondary'];
 
+/**
+ * A kitgun: a modular gun whose stats come from the grip and loader parts the player picks (data.modular_data).
+ * Its own fire_modes only hold placeholder 1-values, so it can't be simulated until parts are composed.
+ */
+export const isKitgun = weapon => Boolean(weapon?.is_modular) && SUPPORTED_WEAPON_TYPES.includes(weapon?.type) && weapon?.subtype !== 'Zaw';
+
 export function isSupportedWeapon(weapon) {
-  return Boolean(COMPAT_TAGS[`${weapon?.type}/${weapon?.subtype}`]) && Array.isArray(weapon.fire_modes) && weapon.fire_modes.length > 0;
+  return Boolean(COMPAT_TAGS[`${weapon?.type}/${weapon?.subtype}`]) && Array.isArray(weapon.fire_modes) && weapon.fire_modes.length > 0
+    && !isKitgun(weapon);
 }
 
 export function maxRank(mod) {

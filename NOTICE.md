@@ -31,3 +31,5 @@ does not extend to the core when redistributed separately.
 Warframe, its names, game data and related assets are the property of
 Digital Extremes Ltd. This project is not affiliated with or endorsed by
 Digital Extremes Ltd.
+
+Card images (mod cards, arcane images, polarity icons) are Digital Extremes' artwork; they ship only in the private `core/` submodule (`core/images/`), and this repository contains none of them.

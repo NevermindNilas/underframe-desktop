@@ -1,16 +1,24 @@
-// The workspace layer: a rounded surface holding the build toolbar, the editor and results columns,
-// and the compare drawer. Shows the boot skeleton and the boot error state too.
+// The workspace layer (docs/arsenal-spec.md 2): the build toolbar over the arsenal body grid: the stats rail and
+// the stage side by side, the gallery under both, the results rail on the right over the full height, and the
+// compare drawer over the gallery area only. Below 1100 px everything stacks in one scroll area with a sticky
+// DPS bar. Shows the boot skeleton and the boot error state too.
+import { useState } from 'react';
 import {
   Body1, Button, Caption1, Link, MessageBar, MessageBarBody, ProgressBar, Skeleton, SkeletonItem, Subtitle1,
   makeStyles, tokens,
 } from '@fluentui/react-components';
 import { ErrorCircleRegular } from '@fluentui/react-icons';
 import { actions, errors } from '../controller.js';
-import { useApp } from '../hooks.js';
+import { useApp, useDelayedFlag, useDerived } from '../hooks.js';
+import { resultDelta, ttkText } from '../model.js';
+import { fmtInt } from '../format.js';
 import { BuildToolbar } from './BuildToolbar.jsx';
-import { Editor } from './Editor.jsx';
 import { ResultsColumn } from './ResultsColumn.jsx';
 import { CompareDrawer } from './CompareDrawer.jsx';
+import { Stage } from './Stage.jsx';
+import { Gallery } from './Gallery.jsx';
+import { StatsPanel } from './StatsPanel.jsx';
+import { DeltaBadge } from './common.jsx';
 
 export const DISCORD_URL = 'https://discord.gg/SNFv5KFQgR';
 export const UNDERFRAME_URL = 'https://www.underframe.site';
@@ -28,13 +36,40 @@ const useStyles = makeStyles({
     overflow: 'hidden',
     position: 'relative',
   },
-  columns: {
-    display: 'flex',
+  body: {
+    display: 'grid',
     flexGrow: 1,
     minHeight: 0,
+    minWidth: 0,
   },
-  // Under 800 px of height the compare drawer shares the editor's column only.
-  leftStack: { display: 'flex', flexDirection: 'column', flexGrow: 1, minWidth: 0, minHeight: 0 },
+  // The stats rail scrolls inside the stage's row without making it taller.
+  statsCell: { position: 'relative', minHeight: 0, minWidth: 0, gridRow: 1, gridColumn: 1 },
+  stats: {
+    position: 'absolute',
+    inset: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    boxSizing: 'border-box',
+    outlineStyle: 'none',
+  },
+  stageCell: { gridRow: 1, minWidth: 0 },
+  lower: { gridRow: 2, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 },
+  resultsCell: { gridRow: '1 / span 2', display: 'flex', minHeight: 0 },
+  dpsBar: {
+    position: 'sticky',
+    top: 0,
+    zIndex: 3,
+    display: 'flex',
+    alignItems: 'center',
+    gap: tokens.spacingHorizontalS,
+    minHeight: '48px',
+    padding: `0 ${tokens.spacingHorizontalL}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    flexWrap: 'wrap',
+  },
+  dpsValue: { fontVariantNumeric: 'tabular-nums', fontWeight: tokens.fontWeightSemibold, fontSize: tokens.fontSizeBase400 },
+  dpsMeta: { color: tokens.colorNeutralForeground2, fontVariantNumeric: 'tabular-nums' },
   // Below 1100 CSS px (zoomed in): one scroll area holding the result card, the editor and the result tabs.
   stacked: {
     flexGrow: 1,
@@ -70,42 +105,83 @@ const useStyles = makeStyles({
   skeletonResults: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
 });
 
+/** Stacked layout (2.5): the headline result stays visible while scrolling to the gallery. */
+function DpsBar() {
+  const styles = useStyles();
+  const sim = useApp(s => s.sim);
+  const { simKey } = useDerived();
+  const s = sim.summary;
+  const busy = sim.status === 'pending' || sim.status === 'running' || sim.key !== simKey;
+  const updating = useDelayedFlag(busy, 150);
+  const show = s?.ok && !(sim.status === 'error' && sim.key === simKey);
+  const delta = show ? resultDelta(s.avgDps, sim.prev?.avgDps) : null;
+  return (
+    <div className={styles.dpsBar} data-testid="dps-bar">
+      <Caption1>Average DPS</Caption1>
+      <span className={styles.dpsValue}>{show ? fmtInt(s.avgDps) : '—'}</span>
+      <DeltaBadge delta={delta} />
+      <Caption1 className={styles.dpsMeta}>{show ? `· TTK ${ttkText(s)}` : ''}{updating ? ' · Updating…' : ''}</Caption1>
+      <span style={{ flexGrow: 1 }} />
+      <Link as="button" onClick={() => document.getElementById('result-card-region')?.scrollIntoView({ block: 'start' })}>Details</Link>
+    </div>
+  );
+}
+
 export function Workspace({ layout }) {
   const styles = useStyles();
   const phase = useApp(s => s.phase);
+  const [stackedEl, setStackedEl] = useState(null);
+  const columns = [layout.statsWidth ? `${layout.statsWidth}px` : null, 'minmax(0, 1fr)', `${layout.resultsWidth}px`].filter(Boolean).join(' ');
+  const statsCol = layout.statsWidth ? 1 : 0;
   return (
     <main className={styles.layer} aria-label="Workspace">
       {phase === 'error' ? <BootError /> : (
         <>
-          <BuildToolbar />
+          <BuildToolbar compactToolbar={layout.statsFolded} />
           {phase === 'loading' ? <BootSkeleton layout={layout} /> : layout.stacked ? (
             <>
-              <div className={styles.stacked} data-scroll-region="" aria-label="Build and results" role="region" tabIndex={-1}>
+              <div ref={setStackedEl} className={styles.stacked} data-scroll-region="" aria-label="Build and results" role="region" tabIndex={-1}>
+                <DpsBar />
                 <ResultsColumn layout={layout} part="card" />
-                <Editor layout={layout} embedded />
+                <Stage layout={layout} />
                 <ResultsColumn layout={layout} part="tabs" />
+                {stackedEl ? <Gallery layout={layout} scrollEl={stackedEl} /> : null}
               </div>
               <CompareDrawer />
             </>
           ) : (
-            <>
-              <div className={styles.columns}>
-                {layout.compactHeight ? (
-                  <div className={styles.leftStack}>
-                    <Editor layout={layout} />
-                    <CompareDrawer />
-                  </div>
-                ) : <Editor layout={layout} />}
+            <div className={styles.body} style={{ gridTemplateColumns: columns, gridTemplateRows: 'auto minmax(0, 1fr)' }}>
+              {layout.statsWidth ? (
+                <div className={styles.statsCell}>
+                  <aside
+                    className={styles.stats}
+                    style={{ padding: `${layout.gutter}px ${Math.max(8, layout.gutter - 8)}px ${layout.gutter}px ${layout.gutter}px` }}
+                    data-pane="stats"
+                    data-scroll-region=""
+                    aria-label="Weapon stats"
+                  >
+                    <StatsPanel />
+                  </aside>
+                </div>
+              ) : null}
+              <div className={styles.stageCell} style={{ gridColumn: statsCol + 1 }}>
+                <Stage layout={layout} />
+              </div>
+              <div className={styles.lower} style={{ gridColumn: `1 / span ${statsCol + 1}` }} data-lower-area="">
+                <Gallery layout={layout} />
+                <CompareDrawer />
+              </div>
+              <div className={styles.resultsCell} style={{ gridColumn: statsCol + 2 }}>
                 <ResultsColumn layout={layout} />
               </div>
-              {layout.compactHeight ? null : <CompareDrawer />}
-            </>
+            </div>
           )}
         </>
       )}
     </main>
   );
 }
+
 
 function BootSkeleton({ layout }) {
   const styles = useStyles();

@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  PAGE_CSP, WORKER_CSP, contentTypeFor, createAppHandler, cspFor, isAppUrl, resolveAppPath,
+  IMAGE_CSP, PAGE_CSP, WORKER_CSP, cacheControlFor, contentTypeFor, createAppHandler, cspFor, isAppUrl, resolveAppPath,
 } from '../src/main/protocol.js';
 import { isAllowedExternal, checkUpstream } from '../src/main/external.js';
 
@@ -57,6 +57,37 @@ test('content types', () => {
   assert.equal(contentTypeFor('a.svg'), 'image/svg+xml');
   assert.equal(contentTypeFor('A.PNG'), 'image/png');
   assert.equal(contentTypeFor('a.bin'), 'application/octet-stream');
+  assert.equal(contentTypeFor('core/images/mods/full/serration.webp'), 'image/webp');
+});
+
+test('card images: read-only route with an extension allowlist', () => {
+  assert.equal(resolveAppPath('/core/images/index.json'), 'core/images/index.json');
+  assert.equal(resolveAppPath('/core/images/mods/full/serration.webp'), 'core/images/mods/full/serration.webp');
+  assert.equal(resolveAppPath('/core/images/mods/compact/primed-cryo-rounds.webp'), 'core/images/mods/compact/primed-cryo-rounds.webp');
+  assert.equal(resolveAppPath('/core/images/arcanes/primary-merciless.webp'), 'core/images/arcanes/primary-merciless.webp');
+  assert.equal(resolveAppPath('/core/images/polarities/Madurai.svg'), 'core/images/polarities/Madurai.svg');
+  assert.equal(resolveAppPath('/core/images/mods/full/SERRATION.WEBP'), 'core/images/mods/full/SERRATION.WEBP');
+  for (const p of ['/core/images/', '/core/images', '/core/images/other.json', '/core/images/mods/full/x.js',
+    '/core/images/mods/full/x.html', '/core/images/mods/full/x', '/core/images/../data/data.json',
+    '/core/images/%2e%2e/data/data.json', '/core/images/..%2fdata%2fdata.json', '/core/images/mods/..%5c..%5cdata.json',
+    '/core/images/mods/full/a%00.webp', '/core/images/C:%5cWindows%5cx.webp', '/core/images//etc/x.webp',
+    '/core/images/../../package.json']) {
+    assert.equal(resolveAppPath(p), null, p);
+  }
+});
+
+test('card images: locked-down CSP and cache headers', () => {
+  for (const p of ['/core/images/mods/full/serration.webp', '/core/images/polarities/Madurai.svg']) {
+    assert.equal(cspFor(p), IMAGE_CSP, p);
+    assert.match(cacheControlFor(p), /max-age=\d+/, p);
+  }
+  assert.match(IMAGE_CSP, /default-src 'none'/);
+  assert.doesNotMatch(IMAGE_CSP, /script-src/);
+  assert.equal(cspFor('/core/images/index.json'), PAGE_CSP);
+  assert.equal(cacheControlFor('/core/images/index.json'), 'no-cache');
+  assert.equal(cacheControlFor('/renderer/index.html'), 'no-cache');
+  // The page may load them: img-src allows the app's own origin.
+  assert.match(PAGE_CSP, /img-src 'self'/);
 });
 
 test('handler serves files with headers and 404s the rest', async t => {
@@ -86,6 +117,49 @@ test('handler serves files with headers and 404s the rest', async t => {
   assert.equal(bundle.status, 200);
   assert.match(bundle.headers.get('content-type'), /^text\/javascript/);
   assert.equal(bundle.headers.get('content-security-policy'), PAGE_CSP);
+
+  await mkdir(path.join(root, 'core', 'images', 'mods', 'full'), { recursive: true });
+  await mkdir(path.join(root, 'core', 'images', 'polarities'), { recursive: true });
+  await mkdir(path.join(root, 'core', 'data'), { recursive: true });
+  await writeFile(path.join(root, 'core', 'images', 'mods', 'full', 'serration.webp'), Buffer.from('RIFF0000WEBP'));
+  await writeFile(path.join(root, 'core', 'images', 'polarities', 'Madurai.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  await writeFile(path.join(root, 'core', 'images', 'index.json'), '{"schema":1}');
+  await writeFile(path.join(root, 'core', 'images', 'notes.txt'), 'secret');
+  await writeFile(path.join(root, 'core', 'data', 'data.json'), '{}');
+
+  const card = await handler(new Request('app://local/core/images/mods/full/serration.webp'));
+  assert.equal(card.status, 200);
+  assert.equal(card.headers.get('content-type'), 'image/webp');
+  assert.equal(card.headers.get('content-security-policy'), IMAGE_CSP);
+  assert.equal(card.headers.get('x-content-type-options'), 'nosniff');
+  assert.match(card.headers.get('cache-control'), /max-age=/);
+  assert.equal(Buffer.from(await card.arrayBuffer()).toString(), 'RIFF0000WEBP');
+
+  const icon = await handler(new Request('app://local/core/images/polarities/Madurai.svg'));
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('content-type'), 'image/svg+xml');
+  assert.equal(icon.headers.get('content-security-policy'), IMAGE_CSP);
+  const encoded = await handler(new Request('app://local/core/%69mages/polarities/Madurai.svg'));
+  assert.equal(encoded.headers.get('content-security-policy'), IMAGE_CSP);
+
+  const index = await handler(new Request('app://local/core/images/index.json'));
+  assert.equal(index.status, 200);
+  assert.match(index.headers.get('content-type'), /^application\/json/);
+
+  const head = await handler(new Request('app://local/core/images/mods/full/serration.webp', { method: 'HEAD' }));
+  assert.equal(head.status, 200);
+  for (const method of ['PUT', 'POST', 'DELETE']) {
+    const res = await handler(new Request('app://local/core/images/mods/full/serration.webp', { method, body: method === 'DELETE' ? null : 'x' }));
+    assert.equal(res.status, 405, method);
+  }
+
+  for (const url of ['app://local/core/images/notes.txt', 'app://local/core/images/mods/full/missing.webp',
+    'app://local/core/images/../../package.json', 'app://local/core/images/%2e%2e/%2e%2e/src/main/main.js',
+    'app://local/core/images/..%2fdata%2fdata.json']) {
+    const res = await handler(new Request(url));
+    assert.equal(res.status, 404, url);
+    assert.notEqual(await res.text(), 'secret', url);
+  }
 
   for (const url of ['app://local/renderer/missing.js', 'app://local/main/main.js', 'app://other/renderer/index.html',
     'app://local/src/renderer/index.html', 'app://local/renderer/../src/renderer/index.html',

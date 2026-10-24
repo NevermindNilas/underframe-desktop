@@ -11,6 +11,7 @@ import { createBuildsStore } from './builds-store.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
 import { SCENES_ARG, attachScenes, scenesDir } from './scenes.js';
+import { registerOcrIpc } from './ocr/ipc.js';
 import { MIN_SIZE, initialSize, themeSourceFrom, titleBarOverlay, wantsMica, windowBackground, zoomFor } from './window-chrome.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -106,6 +107,8 @@ function createWindow() {
         ...(scenes ? [SCENES_ARG] : []),
         // Scene mode only: fail the boot on purpose to capture the loading and boot error screens.
         ...(scenes && process.env.UF_SCENE_BOOT_ERROR === '1' ? ['--uf-scene-boot-error'] : []),
+        // Testing: draw every card as a text card, as when core/images is not installed.
+        ...(process.env.UF_NO_CARD_IMAGES === '1' ? ['--uf-no-card-images'] : []),
       ],
     },
   };
@@ -207,6 +210,8 @@ function registerIpc() {
     await store.remove(String(id));
   });
   handle('uf:openExternal', url => openExternal(url));
+  // Screenshot recognition: 'uf:ocr:recognize' and 'uf:ocr:captureGame'.
+  registerOcrIpc(handle);
   handle('uf:closeAnswer', kind => {
     mainWindow?.closeGuard?.answer(kind === 'close' ? 'close' : 'wait');
   });
@@ -215,8 +220,13 @@ function registerIpc() {
   });
   handle('uf:smokeCapture', tag => (smokeRun ? smokeRun.capture(tag) : null));
   handle('uf:smokeClick', (x, y) => (smokeRun ? smokeRun.click(x, y) : false));
+  handle('uf:smokeOcrImage', () => (smokeRun ? smokeRun.ocrImage() : null));
+
   handle('uf:sceneCapture', name => (scenesRun ? scenesRun.capture(String(name)) : null));
   handle('uf:scenesDone', () => scenesRun?.done());
+  handle('uf:sceneZoom', factor => (scenesRun ? scenesRun.zoom(factor) : false));
+  handle('uf:sceneEmulate', features => (scenesRun ? scenesRun.emulate(features) : false));
+
   handle('uf:scenesFailed', error => scenesRun?.fail(String(error)));
   // Scene mode only: close the window the way the caption button does, to capture the close guard.
   handle('uf:sceneRequestClose', () => {

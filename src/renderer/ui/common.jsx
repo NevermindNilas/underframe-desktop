@@ -1,33 +1,15 @@
-// Small shared pieces: delta badge, honesty badges, polarity glyph, app icon, empty states.
-import {
-  Badge, Body1, Caption1, Popover, PopoverSurface, PopoverTrigger, Subtitle2, Tooltip, makeStyles, mergeClasses,
-  tokens,
-} from '@fluentui/react-components';
-import { ArrowDownRegular, ArrowUpRegular, InfoRegular, WarningRegular } from '@fluentui/react-icons';
+// Small shared pieces: delta badge, what the stat model leaves out per mod, app icon, empty states.
+import { Badge, Caption1, Subtitle2, Tooltip, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
+import { ArrowDownRegular, ArrowUpRegular } from '@fluentui/react-icons';
 import { fmtSignedPct } from '../format.js';
-import { polarityInfo } from '../model.js';
 import { collectModifiers } from '../../shared/stats.js';
 import { maxRank } from '../../shared/mods.js';
 import { unhandledByMod } from '../model.js';
 
 const useStyles = makeStyles({
   numeric: { fontVariantNumeric: 'tabular-nums' },
-  badgeTrigger: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    minHeight: '24px',
-    padding: 0,
-    border: 'none',
-    background: 'none',
-    cursor: 'pointer',
-    borderRadius: tokens.borderRadiusMedium,
-    ':focus-visible': {
-      outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
-      outlineOffset: '1px',
-    },
-  },
-  popover: { maxWidth: '320px' },
   empty: {
+
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'flex-start',
@@ -39,7 +21,6 @@ const useStyles = makeStyles({
   // Spacing comes from the container gap only (UX spec 5.4), not from user-agent <p> margins.
   emptyText: { margin: 0 },
   emptyIcon: { fontSize: '32px', color: tokens.colorNeutralForeground3 },
-  pol: { fontVariantNumeric: 'tabular-nums' },
 });
 
 /**
@@ -79,50 +60,6 @@ export function unmodeledStats(ctx, modName) {
 /** True when a mod has no numeric stats in the data at all: its effect, if any, is up to the engine. */
 export function hasNoStats(ctx, modName) {
   return !ctx.index.byName.get(modName)?.Stats?.length;
-}
-
-function BadgePopover({ badge, label, children }) {
-  const styles = useStyles();
-  return (
-    <Popover withArrow positioning="above">
-      <PopoverTrigger disableButtonEnhancement>
-        <button type="button" className={styles.badgeTrigger} aria-label={label}>{badge}</button>
-      </PopoverTrigger>
-      <PopoverSurface className={styles.popover}>
-        <Body1>{children}</Body1>
-      </PopoverSurface>
-    </Popover>
-  );
-}
-
-export function PartialBadge({ stats, modName }) {
-  return (
-    <BadgePopover
-      label={`Partially simulated${modName ? `: ${modName}` : ''}. Show details`}
-      badge={<Badge appearance="tint" color="warning" icon={<WarningRegular />}>Partially simulated</Badge>}
-    >
-      Not modelled: {stats.join(', ')}. Results for this build may be off.
-    </BadgePopover>
-  );
-}
-
-export function EngineOnlyBadge({ modName }) {
-  return (
-    <BadgePopover
-      label={`Engine-only${modName ? `: ${modName}` : ''}. Show details`}
-      badge={<Badge appearance="tint" color="informative" icon={<InfoRegular />}>Engine-only</Badge>}
-    >
-      This mod has no numeric stats in the data. Its effect counts only if the Underframe engine models it itself.
-    </BadgePopover>
-  );
-}
-
-/** Polarity glyph with a spoken name ("Madurai polarity"). */
-export function Polarity({ polarity }) {
-  const styles = useStyles();
-  const p = polarityInfo(polarity);
-  if (!p.symbol) return null;
-  return <span role="img" aria-label={`${p.label} polarity`} title={`${p.label} polarity`} className={styles.pol}>{p.symbol}</span>;
 }
 
 /** 16 px app mark drawn with brand tokens. */

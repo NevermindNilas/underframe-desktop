@@ -11,9 +11,11 @@ import { LibraryPane } from './LibraryPane.jsx';
 import { Workspace } from './Workspace.jsx';
 import { StatusBar } from './StatusBar.jsx';
 import { Toasts } from './Toasts.jsx';
-import { ModPicker } from './ModPicker.jsx';
+import { OcrDialog } from './OcrDialog.jsx';
+import { DropOverlay } from './DropOverlay.jsx';
 import { Dialogs } from './Dialogs.jsx';
 import { Announcer } from './Announcer.jsx';
+import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { useShortcuts } from './shortcuts.js';
 
 const useStyles = makeStyles({
@@ -55,7 +57,9 @@ export function App() {
     <FluentProvider theme={theme} style={vars} className={useStyles().provider}>
       {/* AriaLiveAnnouncer provides useAnnounce() (the Announcer's completed-result message). */}
       <AriaLiveAnnouncer>
-        <Shell />
+        <ErrorBoundary>
+          <Shell />
+        </ErrorBoundary>
       </AriaLiveAnnouncer>
     </FluentProvider>
   );
@@ -98,8 +102,10 @@ function Shell() {
       </div>
       <StatusBar />
       <Toasts />
-      <ModPicker />
+      <OcrDialog />
+      <DropOverlay />
       <Dialogs />
+
       <Announcer />
     </div>
   );

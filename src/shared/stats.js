@@ -2,6 +2,7 @@
 import { DAMAGE_TYPE_BY_DT, PHYSICAL, combineElements } from './damage.js';
 import { resolveFaction, baneFamilyOfStat } from './factions.js';
 import { statValue } from './mods.js';
+import { arcaneModifiersFor } from './arcanes.js';
 
 const STATUS_DURATION_BASE_SECONDS = 6;
 
@@ -10,7 +11,7 @@ export function collectModifiers(modSlots, modsByName, targetFaction) {
   const m = {
     damage: 0, multishot: 0, critChance: 0, critDamage: 0, statusChance: 0, statusDuration: 0,
     fireRate: 0, magazine: 0, reload: 0, factionDamage: 0, statusDamage: 0, punchThrough: 0,
-    weakPointDamage: 0, weakPointCritChance: 0, physical: { Impact: 0, Puncture: 0, Slash: 0 },
+    weakPointDamage: 0, weakPointCritChance: 0, ammoEfficiency: 0, physical: { Impact: 0, Puncture: 0, Slash: 0 },
     elements: [], unhandled: [],
   };
   const bane = resolveFaction(targetFaction)?.bane;
@@ -115,7 +116,8 @@ export function computeFireMode(mode, m, reload, weapon = null) {
     displayFireRate: finalFireRate,
     magazineSize,
     realMagazineSize: magazineSize,
-    ammoConsumption: mode.ammo_cost ?? 1,
+    // Ammo efficiency (arcanes) lowers what each shot uses; 100% or more makes it free.
+    ammoConsumption: (mode.ammo_cost ?? 1) * Math.max(0, 1 - (m.ammoEfficiency ?? 0)),
     reloadTime,
     factionDamage: m.factionDamage,
     weakPointDamage: m.weakPointDamage,
@@ -133,13 +135,29 @@ export function computeFireMode(mode, m, reload, weapon = null) {
   };
 }
 
+/** Modifiers plus additive bonuses ({ damage: 3.6, reload: 0.3, ... }). */
+export function addModifiers(m, extra) {
+  const out = { ...m };
+  for (const [k, v] of Object.entries(extra ?? {})) if (typeof out[k] === 'number') out[k] += v;
+  return out;
+}
+
 /**
  * Engine-ready stats for every fire mode of a weapon.
- * @returns {{ modes: object[], modifiers: object }}
+ * `arcanes` is resolveArcanes() output; its stat bonuses add to the mod buckets, per fire mode, because
+ * element arcanes (Primary Frostbite: Cold) only count on a mode that deals their element.
+ * @returns {{ modes: object[], modifiers: object }} `modifiers` are the mods' alone.
  */
-export function computeWeaponStats(weapon, modSlots, { modsByName, reload, targetFaction }) {
+export function computeWeaponStats(weapon, modSlots, { modsByName, reload, targetFaction, arcanes = null }) {
   const modifiers = collectModifiers(modSlots, modsByName, targetFaction);
-  return { modes: weapon.fire_modes.map(mode => computeFireMode(mode, modifiers, reload, weapon)), modifiers };
+  const modes = weapon.fire_modes.map(mode => {
+    const plain = computeFireMode(mode, modifiers, reload, weapon);
+    if (!arcanes?.entries?.length) return plain;
+    // Arcanes never change which elements a mode deals, so the plain mode's damage types decide.
+    const extra = arcaneModifiersFor(arcanes, plain.finalDamageTypes);
+    return Object.keys(extra).length ? computeFireMode(mode, addModifiers(modifiers, extra), reload, weapon) : plain;
+  });
+  return { modes, modifiers };
 }
 
 /** Fire modes a player picks directly; child modes (e.g. an AoE that follows a hit) run with their parent. */

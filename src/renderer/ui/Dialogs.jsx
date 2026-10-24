@@ -21,11 +21,23 @@ export const SHORTCUTS = [
     ['F2', 'Rename the build, or the focused library item'],
     ['Del', 'Delete the focused library build'],
   ]],
-  ['Mods', [
-    ['Ctrl+1 … Ctrl+8', 'Choose a mod for slot 1 to 8'],
-    ['Ctrl+9', 'Choose an Exilus mod'],
-    ['Del', 'Remove the focused mod'],
-    ['+ / −', 'Change the focused mod\'s rank'],
+  ['Mods and arcanes', [
+    ['Ctrl+1 … Ctrl+8, Ctrl+9, Ctrl+Shift+9', 'Select slot 1-8, the Exilus slot or the arcane slot, and search the gallery'],
+    ['Ctrl+F', 'Search the gallery'],
+    ['Enter or Space (slot)', 'Select the slot; Space on a selected slot picks its mod up'],
+    ['Space (gallery card)', 'Pick the card up: arrows choose a slot, Enter drops, Del removes, Esc cancels'],
+    ['Enter (gallery card)', 'Equip into the selected slot, else the first empty slot'],
+    ['Alt+Enter', 'Details of the focused card'],
+    ['+ / − / Home / End (slot)', 'Raise, lower, zero or max the rank'],
+    ['Del (slot)', 'Remove the mod'],
+    ['Shift+Enter (slot)', 'Find the best mod for this slot'],
+    ['Alt+Shift+Arrow (slot)', 'Swap with the neighbouring slot'],
+    ['Shift+F10 (slot or card)', 'Slot or card menu'],
+  ]],
+  ['Import', [
+    ['Ctrl+I', 'Import a build from a screenshot file'],
+    ['Ctrl+V', 'Import from a screenshot on the clipboard'],
+    ['Ctrl+Shift+G', 'Read the build from the Warframe window'],
   ]],
   ['Results', [
     ['Ctrl+Enter', 'Run the simulation again now'],
@@ -97,7 +109,9 @@ function AboutDialog() {
               <Subtitle2 as="h3">Known limits</Subtitle2>
               <ul className={styles.list}>
                 <li><Body1>Guns only (primary and secondary weapons).</Body1></li>
-                <li><Body1>No arcanes, rivens, conditional mods or incarnon bonuses yet.</Body1></li>
+                <li><Body1>Weapon arcanes are simulated; rivens, conditional mods, incarnon bonuses and warframe arcanes that buff weapons are not yet.</Body1></li>
+                <li><Body1>Screenshot import needs an English game client and reads mods by their printed names.</Body1></li>
+
               </ul>
               <Caption1>{WHATS_SIMULATED}</Caption1>
             </div>

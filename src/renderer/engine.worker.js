@@ -5,10 +5,33 @@
 //   {type:'simulate', input, seeds}        -> {id, ok:true, results:[result per seed]}
 // Per-run failures come back as {error} entries in `results`. When the input asks for no debug log
 // the log is dropped; when it asks for one, each entry keeps everything except the per-status detail.
+//
+// The engine holds ONE app-state document at a time: cache_app_state(2, ...) evicts ref 1, and a run that
+// names ref 1 afterwards fails with "appStateRef not cached". So the worker keeps every document it was given
+// (the client reuses at most a handful of refs) and re-caches the one a run names when it is not the current one.
 'use strict';
 
 let engine = null;
 let initPromise = null;
+/** ref -> app-state JSON, as last given by cacheAppState. */
+const appStateDocs = new Map();
+/** The ref the engine holds now, or null. */
+let engineRef = null;
+
+function cacheInEngine(ref, json) {
+  const reply = JSON.parse(engine.cache_app_state(ref, json));
+  engineRef = reply?.ok ? ref : null;
+  return reply;
+}
+
+/** Make sure the engine holds the app state `ref` names before a run uses it. */
+function ensureCached(ref) {
+  if (ref == null || ref === engineRef) return;
+  const json = appStateDocs.get(ref);
+  if (json == null) return; // unknown ref: let the engine report it
+  const reply = cacheInEngine(ref, json);
+  if (!reply?.ok) throw new Error(reply?.error ?? 'cache_app_state failed');
+}
 
 function errorText(e) {
   if (e && typeof e === 'object' && 'message' in e) return String(e.message);
@@ -39,6 +62,7 @@ function slimLog(log) {
 }
 
 function simulate(input, seeds) {
+  ensureCached(input?.appStateRef == null ? null : input.appStateRef | 0);
   const json = JSON.stringify(input);
   const wantLog = Boolean(input?.simulationParams?.generateDebugLog);
   return seeds.map(seed => {
@@ -64,7 +88,11 @@ self.onmessage = async ({ data: msg }) => {
         break;
       case 'cacheAppState': {
         await init();
-        const reply = JSON.parse(engine.cache_app_state(msg.ref | 0, typeof msg.appState === 'string' ? msg.appState : JSON.stringify(msg.appState)));
+        const ref = msg.ref | 0;
+        const json = typeof msg.appState === 'string' ? msg.appState : JSON.stringify(msg.appState);
+        const reply = cacheInEngine(ref, json);
+        if (reply?.ok) appStateDocs.set(ref, json);
+        else appStateDocs.delete(ref);
         self.postMessage(reply?.ok ? { id, ok: true } : { id, ok: false, error: reply?.error ?? 'cache_app_state failed' });
         break;
       }

@@ -220,3 +220,114 @@ test('incarnon modes are flagged as partly simulated', async () => {
   assert.equal(isIncarnonMode('Normal Attack'), false);
   assert.equal(isIncarnonMode(undefined), false);
 });
+
+// ---- Arcanes ----------------------------------------------------------------------------------------------------
+async function arcaneCtx() {
+  const { createContext } = await import('../src/renderer/model.js');
+  const RIFLE = '/Lotus/Weapons/Tenno/Rifle/LotusRifle';
+  const PISTOL = '/Lotus/Weapons/Tenno/Pistol/LotusPistol';
+  const fire = [{ mode_name: 'Normal Attack', innate_elements: { Slash: 10 }, fire_rate: 5 }];
+  const data = {
+    weapons: [
+      { name: 'Braton Prime', type: 'Primary', subtype: 'Rifle', mod_compatibility_types: [RIFLE], fire_modes: fire },
+      { name: 'Lex Prime', type: 'Secondary', subtype: 'Pistol', mod_compatibility_types: [PISTOL], fire_modes: fire },
+    ],
+    mods: [],
+    arcanes: ['Primary Merciless', 'Primary Exhilarate', 'Secondary Merciless', 'Secondary Enervate'].map(n => ({ arcane_name: n, max_rank_description: `${n} text` })),
+    conditionals: {
+      arcanes: [
+        { name: 'Primary Merciless', type: 'Primary', trigger: 'On Kill', buffs: [{ type: 'Damage', value: 0.3, max_stacks: 12 }], non_conditional_buffs: [{ type: 'Reload Speed', value: 0.3 }] },
+        { name: 'Secondary Merciless', type: 'Secondary', trigger: 'On Kill', buffs: [{ type: 'Damage', value: 0.3, max_stacks: 12 }] },
+        { name: 'Secondary Enervate', type: 'Secondary', trigger: 'On Hit', buffs: [{ type: 'Enervate Crit Chance Bonus', value: 0.1 }] },
+      ],
+    },
+    dummy_presets: ctx.presets,
+    trusted_builds: [
+      {
+        name: 'Merciless Braton', itemName: 'Braton Prime', type: 'Primary', mods: [], arcanes: ['Primary Merciless'],
+        activeConditionals: { 'Primary Merciless': { isActive: true, stacks: 8 }, 'Galvanized Aptitude': { isActive: true, stacks: 2 } },
+      },
+      { name: 'Lex', itemName: 'Lex Prime', type: 'Secondary', mods: [], arcanes: ['Secondary Enervate'], activeConditionals: { 'Secondary Enervate': { isActive: false, stacks: 0, enervateStartingStacks: 5 } } },
+      { name: 'Exhilarate', itemName: 'Braton Prime', type: 'Primary', mods: [], arcanes: ['Primary Exhilarate'] },
+    ],
+  };
+  return createContext(data);
+}
+
+test('builds saved before arcanes existed get empty arcane slots and stay clean', async () => {
+  const { normalizeBuild, createBuild, contentOf } = await import('../src/renderer/model.js');
+  const actx = await arcaneCtx();
+  const old = { name: 'Old', weaponName: 'Braton Prime', modeName: 'Normal Attack', mods: emptySlots(), enemy: enemyForPreset(actx, 'Elite Crewman'), simTime: 30, notes: '' };
+  const { build: b, warnings } = normalizeBuild(actx, old);
+  assert.deepEqual(b.arcanes, [null]);
+  assert.deepEqual(warnings, []);
+  assert.equal(snapshotOf(b), snapshotOf(old), 'empty arcane slots are not a change against a build stored without them');
+  assert.equal('arcanes' in contentOf(b), false);
+  assert.deepEqual(createBuild(actx).arcanes, [null]);
+});
+
+test('normalizeBuild keeps fitting arcanes, clamps them and drops the rest', async () => {
+  const { normalizeBuild } = await import('../src/renderer/model.js');
+  const actx = await arcaneCtx();
+  const raw = (arcanes, weaponName = 'Braton Prime') => ({ name: 'B', weaponName, mods: [], arcanes, enemy: enemyForPreset(actx, 'Elite Crewman'), simTime: 30 });
+  const merciless = { name: 'Primary Merciless', rank: 5, options: { stacks: 12 } };
+  assert.deepEqual(normalizeBuild(actx, raw([{ name: 'Primary Merciless', rank: 9, options: { stacks: 40 } }])).build.arcanes, [merciless]);
+  assert.deepEqual(normalizeBuild(actx, raw(['Primary Merciless'])).build.arcanes, [merciless], 'bare names import at max rank');
+  const wrong = normalizeBuild(actx, raw([{ name: 'Secondary Merciless', rank: 5 }]));
+  assert.deepEqual(wrong.build.arcanes, [null]);
+  assert.match(wrong.warnings[0], /Secondary Merciless \(does not fit Braton Prime\)/);
+  assert.match(normalizeBuild(actx, raw([{ name: 'Nope' }])).warnings[0], /Nope \(unknown arcane\)/);
+});
+
+test('arcanes count as content: dirty tracking, undo, sim key and pins', async () => {
+  const { setArcane, newArcane, contentOf, withContent, simKeyOf, makePin, pinChanges, createBuild } = await import('../src/renderer/model.js');
+  const actx = await arcaneCtx();
+  const b = createBuild(actx);
+  const withArcane = setArcane(actx, b, 0, newArcane(actx, 'Primary Merciless'));
+  assert.deepEqual(withArcane.arcanes, [{ name: 'Primary Merciless', rank: 5, options: { stacks: 12 } }]);
+  assert.notEqual(snapshotOf(withArcane), snapshotOf(b));
+  assert.notEqual(simKeyOf(actx, withArcane), simKeyOf(actx, b));
+  assert.equal(simKeyOf(actx, { ...b, arcanes: [] }), simKeyOf(actx, b), 'no arcanes and empty slots simulate the same');
+  // Undo back to the arcane-less content removes the arcane.
+  const undone = withContent(withArcane, contentOf(b));
+  assert.deepEqual(undone.arcanes, [null]);
+  assert.equal(snapshotOf(undone), snapshotOf(b));
+  const lower = setArcane(actx, withArcane, 0, { name: 'Primary Merciless', rank: 3, options: { stacks: 6 } });
+  const summary = { avgDps: 1, ttk: 1, ok: true, runs: 1, killedRuns: 1, maxTime: 30 };
+  assert.deepEqual(pinChanges(makePin(lower, summary, 'b'), makePin(withArcane, summary, 'a')), ['Primary Merciless R5→R3', 'Primary Merciless 12→6 stacks']);
+  assert.deepEqual(pinChanges(makePin(withArcane, summary, 'b'), makePin(b, summary, 'a')), ['+Primary Merciless R5']);
+  assert.equal(setArcane(actx, b, 3, newArcane(actx, 'Primary Merciless')), b, 'no such slot');
+});
+
+test('switching weapon drops arcanes that no longer fit', async () => {
+  const { changeWeapon, setArcane, newArcane, createBuild } = await import('../src/renderer/model.js');
+  const actx = await arcaneCtx();
+  const b = setArcane(actx, createBuild(actx), 0, newArcane(actx, 'Primary Merciless'));
+  const { build: lex, removed } = changeWeapon(actx, b, 'Lex Prime');
+  assert.deepEqual(lex.arcanes, [null]);
+  assert.deepEqual(removed, ['Primary Merciless']);
+});
+
+test('arcane candidates: smart search over name and effect, equipped flagged', async () => {
+  const { arcaneCandidates, setArcane, newArcane, createBuild } = await import('../src/renderer/model.js');
+  const actx = await arcaneCtx();
+  const b = setArcane(actx, createBuild(actx), 0, newArcane(actx, 'Primary Merciless'));
+  assert.deepEqual(arcaneCandidates(actx, b, 0).map(a => [a.name, a.equipped]), [['Primary Exhilarate', false], ['Primary Merciless', true]]);
+  assert.deepEqual(arcaneCandidates(actx, b, 0, 'reload damage').map(a => a.name), ['Primary Merciless'], 'every word must match');
+  assert.deepEqual(arcaneCandidates(actx, b, 0, 'merc').map(a => a.name), ['Primary Merciless']);
+  assert.equal(arcaneCandidates(actx, b, 0, 'exhil')[0].support, 'none');
+});
+
+test('featured builds bring their arcanes with the stacks they were set to', async () => {
+  const { buildFromFeatured, unappliedFeatures } = await import('../src/renderer/model.js');
+  const actx = await arcaneCtx();
+  const [merc, lex, exhil] = actx.featured;
+  const a = buildFromFeatured(actx, merc);
+  assert.deepEqual(a.build.arcanes, [{ name: 'Primary Merciless', rank: 5, options: { stacks: 8 } }]);
+  assert.deepEqual(unappliedFeatures(merc.source), ['conditionals'], 'the arcane state itself is not an unapplied conditional');
+  assert.doesNotMatch(a.notes[0], /^Arcanes/);
+  const b = buildFromFeatured(actx, lex);
+  assert.deepEqual(b.build.arcanes, [{ name: 'Secondary Enervate', rank: 5, options: { stacks: 0, startingStacks: 5 } }], 'an inactive arcane imports switched off');
+  assert.deepEqual(unappliedFeatures(lex.source), []);
+  assert.match(buildFromFeatured(actx, exhil).notes[0], /Primary Exhilarate is equipped but not simulated\./);
+});

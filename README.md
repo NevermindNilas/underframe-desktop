@@ -9,12 +9,18 @@ developer's permission.
 
 - Build library: save, rename, annotate and reopen builds
 - Featured builds to start from
-- Mod picker with compatibility and conflict checks
+- Arsenal-style editor: stats, slot cards built from the card art, Exilus and arcane slots, capacity
+  with slot polarities (Forma) and the Orokin Catalyst
+- Card gallery with smart search (`cc`, `drain<=6`, `pol:v`, `is:exilus`, "Did you mean"), filters,
+  drag and drop and keyboard pick-up; compatibility and conflict checks on every card
+- Weapon arcanes, simulated at the stacks you set
+- Screenshot import: reads a build from an arsenal screenshot (file, paste, drop or the game window)
+  with Windows' built-in text recognition, on this PC
 - Target presets with level scaling and Steel Path
 - Seeded multi-run simulation (reproducible results)
 - Enemy HP-over-time chart
 - Compare tray for side-by-side builds
-- Best-mod sweep: tries candidate mods in a slot and ranks them
+- Best-mod sweep: tries candidate mods in a slot and ranks them in the gallery
 
 ## Requirements
 
@@ -82,8 +88,13 @@ core/          Private submodule: Underframe engine (.wasm + loader) and data.js
   simulation (crits, procs, armor, shields, overguard).
 - Saved builds live in `builds.json` under the Electron user data folder,
   written atomically and validated on read.
-- Known v1 limits: guns only. No melee, warframe abilities, arcanes, rivens,
-  conditional mods or incarnon-specific bonuses yet.
+- Card images (mods, arcanes, polarities) live only in the private `core/images/`
+  and are served at `app://local/core/images/`; without them every card is drawn
+  as a text card.
+- Screenshot import runs Windows.Media.Ocr through a small PowerShell helper
+  (`src/main/ocr/`, unpacked from the asar); nothing is uploaded.
+- Known v1 limits: guns only. No melee, warframe abilities, rivens, conditional
+  mods or incarnon-specific bonuses yet.
 
 ## Testing modes
 
@@ -95,6 +106,9 @@ core/          Private submodule: Underframe engine (.wasm + loader) and data.js
 | `UF_WINDOW_SIZE=WxH` | Initial window size (minimum 1100x700). |
 | `UF_NO_MICA=1` | Uses the solid background instead of Mica. |
 | `UF_SECOND_MONITOR=1` | Opens the window at x=-3400, y=40. |
+| `UF_NO_CARD_IMAGES=1` | Draws every card as a text card, as without `core/images`. |
+| `UF_SMOKE_OCR_IMAGE=<file>` | With `UF_SMOKE=1`: also runs real screenshot recognition on a local screenshot. |
+
 
 ## Credits
 

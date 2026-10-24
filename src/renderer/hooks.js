@@ -1,5 +1,6 @@
-// React glue: read the controller's store, window and element sizes, media queries.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+// React glue: read the controller's store, window and element sizes, media queries, the layout class and the
+// gallery's grid window (virtualisation).
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { store, derived } from './controller.js';
 
 /** Subscribe to a slice of app state. The selector must return state values (stable references). */
@@ -81,17 +82,54 @@ export function useWindowFocused() {
   return useSyncExternalStore(subscribe, () => document.hasFocus());
 }
 
-/**
- * Window layout class from the UX spec 2.2, by width in CSS px. Below 1100 (only reachable by zooming in,
- * e.g. 200% on a 1920x1080 window: WCAG 1.4.4 / 1.4.10) the columns stack in one scroll area: the result
- * card first, then the editor, then the result tabs, so nothing is pushed off-screen.
- * `compactHeight` (under 800 px): the compare drawer sits under the editor only, so it never squeezes
- * the results column.
- */
-export function layoutFor(width, height = 900) {
-  const compactHeight = height < 800;
-  if (width >= 1680) return { library: 'inline', libraryWidth: 300, resultsWidth: 440, gutter: 24, stacked: false, compactHeight };
-  if (width >= 1280) return { library: 'inline', libraryWidth: 264, resultsWidth: 380, gutter: 24, stacked: false, compactHeight };
-  if (width >= 1100) return { library: 'overlay', libraryWidth: 300, resultsWidth: 360, gutter: 16, stacked: false, compactHeight };
-  return { library: 'overlay', libraryWidth: Math.min(300, Math.max(240, width - 48)), resultsWidth: null, gutter: 12, stacked: true, compactHeight };
+export { CARD_RATIO, CHROME_HEIGHT, layoutFor, galleryHeaderHeight, slotSizeFor, gridWindow } from './layout.js';
+
+/** Follow a scroll element's scroll position and height (for gridWindow). */
+export function useScrollState(el) {
+  const [state, setState] = useState({ scrollTop: 0, viewport: 0 });
+  useLayoutEffect(() => {
+    if (!el) return undefined;
+    let frame = 0;
+    const read = () => {
+      frame = 0;
+      setState(s => (s.scrollTop === el.scrollTop && s.viewport === el.clientHeight ? s : { scrollTop: el.scrollTop, viewport: el.clientHeight }));
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(read); };
+    read();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [el]);
+  return state;
 }
+
+/** Height of an element (ResizeObserver), as a callback ref like useElementWidth. */
+export function useElementHeight() {
+  const [height, setHeight] = useState(0);
+  const observer = useRef(null);
+  const ref = useCallback(el => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!el) return;
+    setHeight(el.offsetHeight);
+    observer.current = new ResizeObserver(() => setHeight(el.offsetHeight));
+    observer.current.observe(el);
+  }, []);
+  return [ref, height];
+}
+
+/** Calls fn after `ms` without a new `value` (debounced effect). */
+export function useDebounced(value, ms) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+

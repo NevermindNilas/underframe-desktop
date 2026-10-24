@@ -64,3 +64,25 @@ body {
     text-decoration-line: underline !important;
   }
 }
+
+/* Card pips and rarity frames in forced colours: filled pips in CanvasText, empty ones as GrayText rings. */
+@media (forced-colors: active) {
+  .uf-pip {
+    background: transparent !important;
+    border: 1px solid GrayText !important;
+    opacity: 1 !important;
+  }
+  .uf-pip-on {
+    background: CanvasText !important;
+    border-color: CanvasText !important;
+  }
+}
+
+/* The compare drawer opens over the gallery area only: it may shrink there, and the gallery keeps its header. */
+[data-lower-area] > .fui-InlineDrawer {
+  flex-shrink: 1;
+  min-height: 160px;
+}
+[data-lower-area] > [data-testid="gallery"] {
+  min-height: 92px;
+}

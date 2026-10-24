@@ -298,3 +298,22 @@ test('a crashed engine worker is replaced, so Try again works', opts, async () =
   assert.equal(engineState.workers, before + 1);
   assert.equal(store.get().sim.status, 'done');
 });
+
+test('clicking the gallery card of an equipped mod with no slot selected leaves it where it is', opts, async () => {
+  await fresh();
+  actions.equipMod(1, 'Serration', 10, { focus: false });
+  actions.selectSlot(null);
+  const before = store.get().build.mods.map(m => m?.name ?? null);
+  for (let i = 0; i < 3; i++) {
+    const r = actions.equipFromGallery('Serration');
+    assert.equal(r.ok, true);
+    assert.equal(r.slot, 1);
+    assert.equal(r.already, true);
+  }
+  assert.deepEqual(store.get().build.mods.map(m => m?.name ?? null), before, 'no shuffle');
+  // With a slot selected the player chose where it goes: it moves there.
+  actions.selectSlot(5);
+  assert.equal(actions.equipFromGallery('Serration').slot, 5);
+  assert.equal(store.get().build.mods[5]?.name, 'Serration');
+  assert.equal(store.get().build.mods[1], null);
+});

@@ -5,6 +5,8 @@ import { uf } from './platform.js';
 import { createEngineClient } from './engine-client.js';
 import { buildAppState } from '../shared/engine-input.js';
 import { maxRank, conflictingMod } from '../shared/mods.js';
+import { arcaneControls, arcaneMaxRank, isArcaneCompatible } from '../shared/arcanes.js';
+import { createCardAssets, loadCardAssets } from '../shared/card-assets.js';
 import * as M from './model.js';
 import { buildStats, engineInputFor } from './sim.js';
 import * as H from './history.js';
@@ -38,6 +40,26 @@ const DEFAULT_UI = {
   resultsTab: 'charts',
   compareOpen: false,
   chartAsTable: false,
+  // Gallery card size: null follows the window size (docs/arsenal-spec.md 2.1); 'small' | 'medium' | 'large'.
+  galleryCardSize: null,
+  // Text cards everywhere instead of card images (the gallery's Size menu).
+  textCards: false,
+  ocrPrivacySeen: false,
+};
+
+export const RESULTS_TABS = ['charts', 'stats', 'target', 'notes'];
+export const GALLERY_SIZES = { small: 112, medium: 132, large: 168 };
+
+/** Gallery state that is not persisted: the tab, the query and the filter chips. */
+export const DEFAULT_GALLERY = {
+  tab: 'mods', // 'mods' | 'arcanes' | 'best'
+  query: '',
+  effects: [],
+  pols: [],
+  rarities: [],
+  fits: true,
+  hideEquipped: false,
+  sort: 'match',
 };
 
 function loadUi() {
@@ -46,7 +68,9 @@ function loadUi() {
   if (!['mine', 'featured'].includes(ui.libraryTab)) ui.libraryTab = 'mine';
   if (!(ui.librarySort in M.LIBRARY_SORTS)) ui.librarySort = 'recent';
   if (!['All', 'Primary', 'Secondary'].includes(ui.featuredType)) ui.featuredType = 'All';
-  if (!['charts', 'stats', 'best'].includes(ui.resultsTab)) ui.resultsTab = 'charts';
+  if (!RESULTS_TABS.includes(ui.resultsTab)) ui.resultsTab = 'charts';
+  if (ui.galleryCardSize != null && !(ui.galleryCardSize in GALLERY_SIZES)) ui.galleryCardSize = null;
+  ui.textCards = Boolean(ui.textCards);
   return ui;
 }
 
@@ -82,7 +106,19 @@ export const store = createStore({
   baselineId: automated ? null : storageGet(BASELINE_KEY, null),
   sweep: null,
   ui: automated ? { ...DEFAULT_UI } : loadUi(),
-  picker: null, // { slot }
+  // The slot the gallery equips into: 0-8 (8 = Exilus), M.ARCANE_SLOT, or null (the first empty slot).
+  selectedSlot: null,
+  gallery: { ...DEFAULT_GALLERY },
+  // A mouse drag in progress: { kind: 'mod' | 'arcane', name, from: 'gallery' | slot | 'arcane', over }.
+  drag: null,
+  // Keyboard pick-up (docs/arsenal-spec.md 6.3): { kind, name, from, at }.
+  pickup: null,
+  // Screenshot import dialog, see ocr-import.js.
+  ocr: null,
+  // Card image resolver (core/images/index.json); null until loaded.
+  cards: null,
+  // The latest polite announcement { text, seq } (the Announcer speaks it; scene mode shows it).
+  announcement: null,
   dialog: null, // { type: 'leave' | 'about' | 'shortcuts', ... }
   renamingId: null,
   libraryMode: 'inline', // set by the shell from the window width
@@ -148,6 +184,13 @@ export function clearToasts() {
 export function onToast(fn) {
   toastListeners.add(fn);
   return () => toastListeners.delete(fn);
+}
+
+let announceSeq = 0;
+/** Polite screen-reader announcement (equip, remove, pick-up, OCR steps). */
+export function announce(text) {
+  if (!text) return;
+  store.set({ announcement: { text: String(text), seq: ++announceSeq } });
 }
 
 /** Move focus to the element with data-focus-id=`id` once it is rendered (a few frames at most). */
@@ -251,6 +294,7 @@ export function derived() {
       enemy: build && ctx ? M.resolveEnemy(ctx, build.enemy) : null,
       partialMap: M.unhandledByMod(stats?.modifiers?.unhandled),
       simKey: build && ctx ? M.simKeyOf(ctx, build) : '',
+      capacity: build && ctx ? M.buildCapacity(ctx, build) : null,
     };
   }
   return memo;
@@ -267,6 +311,10 @@ function setUi(patch) {
     if (!automated) storageSet(UI_KEY, ui);
     return { ui };
   });
+}
+
+function setGallery(patch) {
+  store.set(s => ({ gallery: { ...s.gallery, ...patch } }));
 }
 
 // ---------- engine plumbing ----------
@@ -364,6 +412,8 @@ async function runSim() {
     if (gen !== simGen) return null;
     const message = e?.message ?? String(e);
     errors.push(`simulation: ${message}`);
+    // The engine lost an app state we thought it held: forget them all, so Try again caches afresh.
+    if (/appStateRef not cached/i.test(message)) appStates.clear();
     store.set(s => ({ sim: { ...s.sim, status: 'error', key, error: message } }));
     if (pendingPin) {
       pendingPin = false;
@@ -436,7 +486,8 @@ async function startSweep(slot) {
       key: M.sweepKeyOf(ctx, build, slot), weaponName: build.weaponName, slotModAtStart: current, error: null,
     },
   });
-  setUi({ resultsTab: 'best' });
+  // The gallery's Best mod tab selects itself (docs/arsenal-spec.md 5.6).
+  setGallery({ tab: 'best' });
   const dpsOf = async modSlots => {
     const ref = await ensureAppState(weapon);
     const runs = await engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false, modSlots }), M.SWEEP_SEEDS);
@@ -531,7 +582,10 @@ function openWorkingBuild(build, notices = []) {
     history: H.emptyHistory(),
     notices: notices.filter(n => n?.items?.length),
     orphanOf: null,
-    picker: null,
+    selectedSlot: null,
+    pickup: null,
+    drag: null,
+    gallery: s.gallery.tab === 'best' ? { ...s.gallery, tab: 'mods' } : s.gallery,
     editorEpoch: s.editorEpoch + 1,
     // The delta badge only tracks edits within one build.
     sim: { ...s.sim, prev: null },
@@ -587,7 +641,10 @@ export const actions = {
   setLibraryTab(tab) { setUi({ libraryTab: tab }); },
   setLibrarySort(sort) { if (sort in M.LIBRARY_SORTS) setUi({ librarySort: sort }); },
   setFeaturedType(type) { setUi({ featuredType: type }); },
-  setResultsTab(tab) { setUi({ resultsTab: tab }); },
+  setResultsTab(tab) { if (RESULTS_TABS.includes(tab)) setUi({ resultsTab: tab }); },
+  setGalleryCardSize(size) { setUi({ galleryCardSize: size in GALLERY_SIZES ? size : null }); },
+  setTextCards(on) { setUi({ textCards: Boolean(on) }); },
+  markOcrPrivacySeen() { if (!store.get().ui.ocrPrivacySeen) setUi({ ocrPrivacySeen: true }); },
   setCompareOpen(open) {
     if (Boolean(open) === Boolean(store.get().ui.compareOpen)) return;
     if (open) {
@@ -787,22 +844,260 @@ export const actions = {
   setMode(modeName) { updateBuild(b => (b.modeName === modeName ? b : { ...b, modeName })); },
 
   /** Equip a mod (rank defaults to max). Returns false and explains when it cannot go in that slot. */
-  equipMod(slot, name, rank, { focus = true } = {}) {
+  equipMod(slot, name, rank, { focus = true, quiet = false } = {}) {
     const { ctx, build } = store.get();
     const mod = ctx.index.byName.get(name);
-    if (!mod) { notify({ intent: 'warning', title: `Couldn't equip ${name}: unknown mod.` }); return false; }
-    if (!M.fitsSlot(ctx, name, slot)) { notify({ intent: 'warning', title: `Couldn't equip ${name}: only Exilus mods fit the Exilus slot.` }); return false; }
+    if (!mod) { if (!quiet) notify({ intent: 'warning', title: `Couldn't equip ${name}: unknown mod.` }); return false; }
+    if (!M.fitsSlot(ctx, name, slot)) { if (!quiet) notify({ intent: 'warning', title: `Couldn't equip ${name}: only Exilus mods fit the Exilus slot.` }); return false; }
     const others = build.mods.map((s, i) => (i === slot ? null : s?.name ?? null));
     const conflict = conflictingMod(name, others, ctx.index);
     if (conflict) {
-      notify({ intent: 'warning', title: conflict === name ? `${name} is already equipped.` : `${name} conflicts with ${conflict}.` });
+      if (!quiet) notify({ intent: 'warning', title: conflict === name ? `${name} is already equipped.` : `${name} conflicts with ${conflict}.` });
       return false;
     }
     const max = maxRank(mod);
     const r = rank == null ? max : Math.min(max, Math.max(0, Math.round(rank)));
     updateBuild(b => (b.mods[slot]?.name === name && b.mods[slot]?.rank === r ? b : M.setSlot(b, slot, { name, rank: r })));
-    if (focus) focusLater(`slot-name-${slot}`);
+    if (focus) focusLater(`slot-select-${slot}`);
     return true;
+  },
+
+  // ---- Arsenal: slot selection, the gallery, drag and drop (docs/arsenal-spec.md 4-6) ----
+
+  /** Select a slot (0-8, M.ARCANE_SLOT) or null. The arcane slot switches the gallery to Arcanes. */
+  selectSlot(slot, { focusGallery = false } = {}) {
+    const s = store.get();
+    if (s.phase !== 'ready') return;
+    const next = M.isArcaneSlot(slot) || (Number.isInteger(slot) && slot >= 0 && slot < M.SLOT_COUNT) ? slot : null;
+    const tab = M.isArcaneSlot(next) ? 'arcanes' : next != null && s.gallery.tab === 'arcanes' ? 'mods' : s.gallery.tab;
+    store.set({ selectedSlot: next, gallery: tab !== s.gallery.tab ? { ...s.gallery, tab } : s.gallery });
+    if (focusGallery) focusLater('gallery-search');
+  },
+  /** Select the slot, or clear the selection when it is already selected. */
+  toggleSlot(slot) {
+    actions.selectSlot(store.get().selectedSlot === slot ? null : slot);
+  },
+  setGallery(patch) { setGallery(patch); },
+  setGalleryTab(tab) { if (['mods', 'arcanes', 'best'].includes(tab)) setGallery({ tab }); },
+  setGalleryQuery(query) { setGallery({ query: String(query ?? '') }); },
+  /** A stat row in the stats rail: put its search word in the gallery search and show Mods. */
+  searchStat(token) {
+    setGallery({ tab: 'mods', query: token });
+    focusLater('gallery-search');
+  },
+  clearGalleryFilters() { setGallery({ effects: [], pols: [], rarities: [], hideEquipped: false, fits: true }); },
+
+  /**
+   * Gallery click, Enter or Space on a mod card: equip into the target slot (the selected slot, else the first empty
+   * one) at max rank. An equipped card moves to the selected slot (a swap when it is filled); with no slot
+   * selected it stays put. Returns { ok, slot, reason, already? }.
+   */
+  equipFromGallery(name) {
+    const { ctx, build, selectedSlot } = store.get();
+    const mod = ctx.index.byName.get(name);
+    if (!mod) return { ok: false, reason: 'Unknown mod' };
+    const target = M.targetSlotFor(ctx, build, selectedSlot, name);
+    if (target == null) {
+      const reason = 'All slots are full. Select a slot to replace its mod.';
+      notify({ intent: 'info', title: reason });
+      announce(reason);
+      return { ok: false, reason };
+    }
+    const from = build.mods.findIndex(m => m?.name === name);
+    // An equipped mod only moves when the player chose where: with no slot selected, a click (or a double
+    // click) on its card says where it is instead of shuffling it into the first empty slot.
+    if (from >= 0 && !(Number.isInteger(selectedSlot) && selectedSlot >= 0 && selectedSlot < M.SLOT_COUNT)) {
+      announce(`${name} is already in ${from === M.EXILUS_SLOT ? 'the Exilus slot' : M.slotLabel(from).toLowerCase()}. Select another slot first to move it.`);
+      return { ok: true, slot: from, already: true };
+    }
+    if (from >= 0) {
+      if (from === target) return { ok: true, slot: target };
+      const next = M.swapSlots(ctx, build, from, target);
+      if (next === build) {
+        const reason = target === M.EXILUS_SLOT ? 'Not an Exilus mod' : `Can't move ${name} there`;
+        announce(reason);
+        return { ok: false, reason };
+      }
+      commitBuild(next);
+      announce(`${name} moved to ${M.slotLabel(target).toLowerCase()}. Average DPS updating.`);
+      return { ok: true, slot: target };
+    }
+    const reason = M.slotBlockReason(ctx, build, target, name);
+    if (reason) {
+      announce(`${name}: ${reason}`);
+      return { ok: false, reason };
+    }
+    const wasEmpty = !build.mods[target];
+    actions.equipMod(target, name, null, { focus: false, quiet: true });
+    if (selectedSlot === target && wasEmpty) store.set({ selectedSlot: M.nextEmptySlot(store.get().build, target) });
+    announce(`${name} equipped in ${M.slotLabel(target).toLowerCase()}. Average DPS updating.`);
+    return { ok: true, slot: target };
+  },
+
+  /** Drop a mod on a slot: from the gallery it equips (replacing), from a slot it swaps. Returns true on success. */
+  dropMod(name, from, to) {
+    const { ctx, build } = store.get();
+    if (from === to) return false;
+    if (Number.isInteger(from)) {
+      const next = M.swapSlots(ctx, build, from, to);
+      if (next === build) { announce('Not an Exilus mod'); return false; }
+      const other = build.mods[to]?.name;
+      commitBuild(next);
+      announce(other ? `Swapped ${name} with ${other}.` : `${name} moved to ${M.slotLabel(to).toLowerCase()}.`);
+      return true;
+    }
+    const reason = M.slotBlockReason(ctx, build, to, name);
+    if (reason) { announce(`${name}: ${reason}`); return false; }
+    const ok = actions.equipMod(to, name, null, { focus: false, quiet: true });
+    if (ok) announce(`${name} equipped in ${M.slotLabel(to).toLowerCase()}. Average DPS updating.`);
+    return ok;
+  },
+
+  /** Remove a mod with an Undo toast (a slot dragged out, or Delete in pick-up mode). */
+  removeWithUndo(slot) {
+    const { build } = store.get();
+    const name = build.mods[slot]?.name;
+    if (!name) return;
+    actions.clearSlot(slot, { focus: false });
+    const after = M.snapshotOf(store.get().build);
+    announce(`Removed ${name}.`);
+    notify({
+      intent: 'success',
+      title: `Removed ${name}`,
+      action: {
+        label: 'Undo',
+        run: () => {
+          if (M.snapshotOf(store.get().build) === after) actions.undo();
+          else notify({ intent: 'info', title: "Couldn't undo: the build changed since. Use Ctrl+Z to step back." });
+        },
+      },
+    });
+  },
+
+  /** Swap a slot's mod with its neighbour in the grid (Alt+Shift+Arrow). */
+  swapNeighbour(slot, dir) {
+    const { ctx, build } = store.get();
+    if (!Number.isInteger(slot) || slot === M.EXILUS_SLOT || !build.mods[slot]) return false;
+    const col = slot % 4;
+    const row = Math.floor(slot / 4);
+    const to = dir === 'left' ? (col > 0 ? slot - 1 : null) : dir === 'right' ? (col < 3 ? slot + 1 : null) : dir === 'up' ? (row > 0 ? slot - 4 : null) : (row < 1 ? slot + 4 : null);
+    if (to == null) return false;
+    const next = M.swapSlots(ctx, build, slot, to);
+    if (next === build) return false;
+    commitBuild(next);
+    announce(`Swapped with ${M.slotLabel(to).toLowerCase()}.`);
+    focusLater(`slot-select-${to}`);
+    return true;
+  },
+
+  removeAllMods() {
+    const { build } = store.get();
+    const count = build.mods.filter(Boolean).length;
+    if (!count) return;
+    updateBuild(b => ({ ...b, mods: M.emptySlots() }));
+    const after = M.snapshotOf(store.get().build);
+    notify({
+      intent: 'success',
+      title: `Removed ${count} ${count === 1 ? 'mod' : 'mods'}.`,
+      action: { label: 'Undo', run: () => { if (M.snapshotOf(store.get().build) === after) actions.undo(); } },
+    });
+  },
+
+  setSlotPolarity(slot, code) {
+    const { ctx } = store.get();
+    updateBuild(b => M.setSlotPolarity(ctx, b, slot, code), { resim: false });
+  },
+  resetSlotPolarities() {
+    updateBuild(b => (b.slotPolarities?.some(p => p != null) ? { ...b, slotPolarities: M.emptyPolarities() } : b), { resim: false });
+  },
+  setCatalyst(on) {
+    updateBuild(b => (Boolean(b.catalyst !== false) === Boolean(on) ? b : { ...b, catalyst: Boolean(on) }), { resim: false });
+  },
+
+  // ---- Arcanes ----
+
+  /**
+   * Equip an arcane at max rank and max stacks in arcane slot `slot` (0, or a kitgun's 1 for Pax / Residual
+   * arcanes); by default the selected arcane slot, else 0. An arcane that only fits the kitgun's other slot goes there.
+   */
+  equipArcane(name, slot = null) {
+    const { ctx, build, selectedSlot } = store.get();
+    const weapon = ctx.weaponByName.get(build.weaponName);
+    let i = Number.isInteger(slot) ? slot : Math.max(0, M.arcaneIndexOf(selectedSlot));
+    if (!isArcaneCompatible(name, weapon, ctx.data, i) && isArcaneCompatible(name, weapon, ctx.data, 1 - i)) i = 1 - i;
+    if (!isArcaneCompatible(name, weapon, ctx.data, i)) {
+      const reason = `${name} doesn't fit ${build.weaponName}.`;
+      announce(reason);
+      return { ok: false, reason };
+    }
+    if (build.arcanes?.[i]?.name === name) return { ok: true, slot: i };
+    updateBuild(b => M.setArcane(ctx, b, i, M.newArcane(ctx, name)));
+    announce(`${name} equipped in the ${i === 1 ? 'kitgun arcane' : 'arcane'} slot. Average DPS updating.`);
+    return { ok: true, slot: i };
+  },
+  setArcaneRank(slot, rank) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const a = b.arcanes?.[slot];
+      if (!a) return b;
+      const max = arcaneMaxRank(a.name, ctx.data);
+      const r = Math.min(max, Math.max(0, Math.round(rank)));
+      return r === a.rank ? b : M.setArcane(ctx, b, slot, { ...a, rank: r });
+    });
+  },
+  setArcaneStacks(slot, stacks) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const a = b.arcanes?.[slot];
+      const c = a ? arcaneControls(a.name, ctx.data).stacks : null;
+      if (!a || !c) return b;
+      const n = Math.min(c.max, Math.max(0, Math.round(Number(stacks) || 0)));
+      return n === a.options?.stacks ? b : M.setArcane(ctx, b, slot, { ...a, options: { ...a.options, stacks: n } });
+    });
+  },
+  clearArcane(slot = 0, { focus = true } = {}) {
+    const { ctx } = store.get();
+    const name = store.get().build.arcanes?.[slot]?.name;
+    const changed = updateBuild(b => (b.arcanes?.[slot] ? M.setArcane(ctx, b, slot, null) : b));
+    if (changed && name) announce(`Removed ${name}.`);
+    if (changed && focus) focusLater(M.arcaneFocusId(slot));
+  },
+
+  // ---- Drag state (pointer) and keyboard pick-up ----
+  setDrag(drag) { store.set({ drag }); },
+  /** Space on a card or filled slot: pick it up; arrows choose a slot, Enter drops, Delete removes, Esc cancels. */
+  startPickup(item) {
+    store.set({ pickup: { ...item, at: item.target ?? (item.kind === 'arcane' ? M.ARCANE_SLOT : item.from === 'gallery' ? (M.targetSlotFor(store.get().ctx, store.get().build, store.get().selectedSlot, item.name) ?? 0) : item.from) } });
+    announce(`Picked up ${item.name}. Use arrow keys to choose a slot, Enter to drop, Delete to remove, Escape to cancel.`);
+    const at = store.get().pickup.at;
+    focusLater(M.isArcaneSlot(at) ? M.arcaneFocusId(M.arcaneIndexOf(at)) : store.get().build.mods[at] ? `slot-select-${at}` : `slot-add-${at}`);
+  },
+  movePickup(at) { store.set(s => (s.pickup ? { pickup: { ...s.pickup, at } } : null)); },
+  cancelPickup() {
+    const p = store.get().pickup;
+    store.set({ pickup: null });
+    if (!p) return;
+    announce('Cancelled.');
+    if (p.from === 'gallery') focusLater(`gallery-card-${p.name}`);
+    else if (Number.isInteger(p.from)) focusLater(`slot-select-${p.from}`);
+  },
+  dropPickup(at = store.get().pickup?.at) {
+    const p = store.get().pickup;
+    if (!p) return false;
+    store.set({ pickup: null });
+    let ok = false;
+    if (p.kind === 'arcane') ok = M.isArcaneSlot(at) && actions.equipArcane(p.name, M.arcaneIndexOf(at)).ok;
+    else if (Number.isInteger(at)) ok = actions.dropMod(p.name, p.from, at);
+    const filled = Number.isInteger(at) && store.get().build.mods[at];
+    focusLater(M.isArcaneSlot(at) ? M.arcaneFocusId(M.arcaneIndexOf(at)) : filled ? `slot-select-${at}` : `slot-add-${at}`);
+    return ok;
+  },
+  removePickup() {
+    const p = store.get().pickup;
+    if (!p || !Number.isInteger(p.from)) return;
+    store.set({ pickup: null });
+    actions.removeWithUndo(p.from);
+    focusLater(`slot-add-${p.from}`);
   },
 
   setRank(slot, rank) {
@@ -816,7 +1111,9 @@ export const actions = {
   },
 
   clearSlot(slot, { focus = true } = {}) {
+    const name = store.get().build.mods[slot]?.name;
     const changed = updateBuild(b => (b.mods[slot] ? M.setSlot(b, slot, null) : b));
+    if (changed && name) announce(`Removed ${name}.`);
     if (changed && focus) focusLater(`slot-add-${slot}`);
   },
 
@@ -1011,26 +1308,12 @@ export const actions = {
   },
 
   startSweep(slot) {
-    store.set({ picker: null });
     return startSweep(slot);
   },
   cancelSweep: () => stopSweep('cancelled'),
   dismissSweep() {
     stopSweep(null);
-    if (store.get().ui.resultsTab === 'best') setUi({ resultsTab: 'charts' });
-  },
-
-  openPicker(slot) {
-    if (store.get().phase !== 'ready') return;
-    store.set({ picker: { slot } });
-  },
-  closePicker() {
-    const p = store.get().picker;
-    store.set({ picker: null });
-    if (p) {
-      const filled = Boolean(store.get().build.mods[p.slot]);
-      focusLater(filled ? `slot-name-${p.slot}` : `slot-add-${p.slot}`);
-    }
+    if (store.get().gallery.tab === 'best') setGallery({ tab: 'mods' });
   },
 
   openDialog(type) { store.set({ dialog: { type, returnFocus: document.activeElement } }); },
@@ -1201,6 +1484,8 @@ export async function boot({ onReady } = {}) {
     const ctx = M.createContext(data, manifest);
     if (!ctx.weapons.length) throw new Error('The game data contains no supported weapons.');
     loading({ text: 'Starting the damage engine…' });
+    // Card images (core/images/index.json): text cards until it arrives; missing images stay text cards.
+    const cardsP = uf.noCardImages ? Promise.resolve(createCardAssets(null)) : loadCardAssets({ fetch: (u, o) => fetch(u, o) });
     await engineReady;
     loading({ text: 'Reading your builds…' });
     const savedBuilds = await loadSavedBuilds();
@@ -1211,7 +1496,8 @@ export async function boot({ onReady } = {}) {
     const last = !automated && savedBuilds.find(b => b.id === lastId);
     if (last) ({ build, warnings } = M.normalizeBuild(ctx, last));
 
-    store.set({ ctx, manifest, build, snapshot: M.snapshotOf(build), notices: [noticeFrom(warnings)].filter(Boolean), phase: 'ready' });
+    const cards = await cardsP;
+    store.set({ ctx, manifest, build, cards, snapshot: M.snapshotOf(build), notices: [noticeFrom(warnings)].filter(Boolean), phase: 'ready' });
     timings.readyMs = Math.round(performance.now() - t0);
 
     uf.appInfo().then(appInfo => store.set({ appInfo }), () => {});
@@ -1242,4 +1528,6 @@ export async function boot({ onReady } = {}) {
   }
 }
 
-export const app = { store, actions, derived, simKey, isDirty, uf, errors, timings, notify, injectSimError };
+export const app = { store, actions, derived, simKey, isDirty, uf, errors, timings, notify, injectSimError, announce };
+export { commitBuild as commitBuildForImport, openWorkingBuild as openImportedBuild, noticeFrom, setGallery, setUi };
+
