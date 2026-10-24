@@ -82,9 +82,11 @@ test('fire mode stats follow Warframe stacking rules', () => {
   const s = computeFireMode(mode, m, { magazine_size: 30, reload_time: 2 });
 
   const dmg = 1 + 1.65;
-  close(s.finalDamageTypes.Impact, 50 * 1.3 * dmg);
-  close(s.finalDamageTypes.Puncture, 50 * dmg);
-  close(s.finalDamageTypes.Blast, 100 * 0.9 * dmg + 100 * 0.9 * dmg);
+  // Each type is quantized to steps of base / 32 (100 / 32 = 3.125) before the damage multiplier.
+  const q = v => Math.round(v / 3.125) * 3.125;
+  close(s.finalDamageTypes.Impact, q(50 * 1.3) * dmg);
+  close(s.finalDamageTypes.Puncture, q(50) * dmg);
+  close(s.finalDamageTypes.Blast, q(100 * 0.9 + 100 * 0.9) * dmg);
   assert.equal(s.finalDamageTypes.Heat, undefined);
   close(s.totalFinalDamage, Object.values(s.finalDamageTypes).reduce((a, b) => a + b));
   close(s.finalMultishot, 1.9);

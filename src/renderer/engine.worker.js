@@ -2,13 +2,15 @@
 // Protocol: every request carries a numeric `id`, every reply echoes it.
 //   {type:'init'}                          -> {id, ok:true} | {id, ok:false, error}
 //   {type:'cacheAppState', ref, appState}  -> {id, ok:true} | {id, ok:false, error}
+//   {type:'releaseAppState', ref}          -> {id, ok:true}  (forgets the document; the client never names ref again)
 //   {type:'simulate', input, seeds}        -> {id, ok:true, results:[result per seed]}
+//   {type:'score', input, seeds, metric}   -> {id, ok:true, sum, count, errors, error}  (Auto Build: one number per run)
 // Per-run failures come back as {error} entries in `results`. When the input asks for no debug log
 // the log is dropped; when it asks for one, each entry keeps everything except the per-status detail.
 //
 // The engine holds ONE app-state document at a time: cache_app_state(2, ...) evicts ref 1, and a run that
 // names ref 1 afterwards fails with "appStateRef not cached". So the worker keeps every document it was given
-// (the client reuses at most a handful of refs) and re-caches the one a run names when it is not the current one.
+// until the client releases it, and re-caches the one a run names when it is not the current one.
 'use strict';
 
 let engine = null;
@@ -78,6 +80,52 @@ function simulate(input, seeds) {
   });
 }
 
+/**
+ * Auto Build's request: run `input` once per seed and add up `metric` (avgDps, avgRawPerShot, avgDotPerShot) over the
+ * runs that succeed. Uses the engine's prepared-candidate path when it has one (the input is parsed once, about 20%
+ * faster, same results), else calculate_dps_wasm.
+ */
+function score(input, seeds, metric) {
+  const json = typeof input === 'string' ? input : JSON.stringify(input);
+  let sum = 0;
+  let count = 0;
+  let errors = 0;
+  let error = null;
+  let prepared = null;
+  if (typeof engine.prepare_canonical_candidate_v1 === 'function') {
+    try {
+      const p = JSON.parse(engine.prepare_canonical_candidate_v1(json));
+      if (p?.supported && p.preparationId != null) prepared = p.preparationId;
+    } catch {
+      prepared = null;
+    }
+  }
+  try {
+    for (const seed of seeds) {
+      try {
+        engine.seed_rng(seed >>> 0);
+        const r = JSON.parse(prepared != null ? engine.calculate_prepared_canonical_trial_v1(prepared) : engine.calculate_dps_wasm(json));
+        const v = Number(r?.[metric]);
+        if (r?.error || !Number.isFinite(v)) {
+          errors++;
+          error ??= String(r?.error ?? `No ${metric} in the result`);
+        } else {
+          sum += v;
+          count++;
+        }
+      } catch (e) {
+        errors++;
+        error ??= errorText(e);
+      }
+    }
+  } finally {
+    if (prepared != null) {
+      try { engine.release_prepared_candidate_v1(prepared); } catch { /* already released */ }
+    }
+  }
+  return { sum, count, errors, error };
+}
+
 self.onmessage = async ({ data: msg }) => {
   const id = msg?.id;
   try {
@@ -96,10 +144,27 @@ self.onmessage = async ({ data: msg }) => {
         self.postMessage(reply?.ok ? { id, ok: true } : { id, ok: false, error: reply?.error ?? 'cache_app_state failed' });
         break;
       }
+      case 'releaseAppState': {
+        const ref = msg.ref | 0;
+        appStateDocs.delete(ref);
+        // The engine may still hold it as its one document; a later cache replaces it.
+        if (engineRef === ref) engineRef = null;
+        self.postMessage({ id, ok: true });
+        break;
+      }
       case 'simulate':
         await init();
         self.postMessage({ id, ok: true, results: simulate(msg.input, Array.isArray(msg.seeds) && msg.seeds.length ? msg.seeds : [1]) });
         break;
+      case 'score': {
+        await init();
+        // A string input names its app state inside the JSON: read the ref without parsing it all.
+        const ref = typeof msg.input === 'string' ? Number(/"appStateRef":(\d+)/.exec(msg.input)?.[1] ?? NaN) : msg.input?.appStateRef;
+        ensureCached(Number.isFinite(ref) ? ref | 0 : null);
+        const seeds = Array.isArray(msg.seeds) && msg.seeds.length ? msg.seeds : [1];
+        self.postMessage({ id, ok: true, ...score(msg.input, seeds, String(msg.metric || 'avgDps')) });
+        break;
+      }
       default:
         self.postMessage({ id, ok: false, error: `Unknown request: ${msg?.type}` });
     }

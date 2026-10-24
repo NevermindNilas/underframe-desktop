@@ -2,6 +2,8 @@
 // src/ from a plain web server while developing the UI) a local fallback keeps the UI usable.
 
 const STORE_KEY = 'uf.dev.builds';
+const PRESETS_KEY = 'uf.dev.buffPresets';
+const AUTO_BUILD_KEY = 'uf.dev.autoBuild';
 
 function readDevBuilds() {
   try {
@@ -30,6 +32,24 @@ const fallback = {
       return saved;
     },
     remove: async id => writeDevBuilds(readDevBuilds().filter(b => b.id !== id)),
+  },
+  buffPresets: {
+    get: async () => {
+      try { return JSON.parse(localStorage.getItem(PRESETS_KEY) ?? 'null') ?? { version: 1, presets: [] }; } catch { return { version: 1, presets: [] }; }
+    },
+    set: async library => {
+      try { localStorage.setItem(PRESETS_KEY, JSON.stringify(library)); } catch { /* storage unavailable */ }
+      return library;
+    },
+  },
+  autoBuild: {
+    get: async () => {
+      try { return JSON.parse(localStorage.getItem(AUTO_BUILD_KEY) ?? 'null'); } catch { return null; }
+    },
+    set: async doc => {
+      try { localStorage.setItem(AUTO_BUILD_KEY, JSON.stringify(doc)); } catch { /* storage unavailable */ }
+      return doc;
+    },
   },
   openExternal: async url => Boolean(window.open(url, '_blank', 'noopener')),
   ocr: {

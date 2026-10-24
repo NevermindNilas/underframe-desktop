@@ -3,14 +3,20 @@
 import { createStore } from './store.js';
 import { uf } from './platform.js';
 import { createEngineClient } from './engine-client.js';
+import { createAppStateCache } from './app-state-cache.js';
 import { buildAppState } from '../shared/engine-input.js';
 import { maxRank, conflictingMod } from '../shared/mods.js';
 import { arcaneControls, arcaneMaxRank, isArcaneCompatible } from '../shared/arcanes.js';
+import * as X from '../shared/external-buffs.js';
 import { createCardAssets, loadCardAssets } from '../shared/card-assets.js';
 import * as M from './model.js';
 import { buildStats, engineInputFor } from './sim.js';
 import { baseModeOf, weakestSlot } from './sheet.js';
 import * as H from './history.js';
+import * as AS from '../shared/auto-build-settings.js';
+import { startAutoBuildWorker } from './auto-build-client.js';
+import { fmtInt } from './format.js';
+import { gainText } from './auto-build-format.js';
 
 const PINS_KEY = 'uf.pins';
 const BASELINE_KEY = 'uf.pinBaseline';
@@ -124,6 +130,18 @@ export const store = createStore({
   // The target popover (Readout › Change, Ctrl+T) and the Compare dialog (Readout › Expand, Ctrl+J).
   targetOpen: false,
   compareOpen: false,
+  // The External buffs dialog (Readout › Buffs) and the user's buff preset library (one per user, on disk).
+  buffsOpen: false,
+  /** The Average DPS when the External buffs dialog opened: its footer compares the live result with it. */
+  buffsBaseline: null,
+  buffPresets: { version: 1, presets: [] },
+  // Auto build (docs/port-auto-build.md): the dialog, the run ({ status, percent, step, detail, runs, elapsedMs, result,
+  // error, startSnapshot, ... } or null) and the user's configs (auto-build-settings.js library; null until loaded).
+  autoBuildOpen: false,
+  autoBuild: null,
+  /** A finished result was dropped on reopening because the build had changed since (the Run tab says so). */
+  autoBuildDropped: false,
+  autoBuildLibrary: null,
   gallery: { ...DEFAULT_GALLERY },
   // A mouse drag in progress: { kind: 'mod' | 'arcane', name, from: 'gallery' | slot | 'arcane', over }.
   drag: null,
@@ -143,9 +161,20 @@ export const store = createStore({
 
 export const errors = [];
 export const timings = {};
-/** weaponName -> {ref, promise}; Map order is LRU order. Cleared when the engine worker restarts. */
-const appStates = new Map();
-const engine = createEngineClient(undefined, { onRestart: () => appStates.clear() });
+// Declared before the engine so its restart hook can clear it.
+let appStates = null;
+const engine = createEngineClient(undefined, { onRestart: () => appStates?.clear() });
+/**
+ * The interactive engine's app states, one per weapon and target-status list (statuses live in the cached app state;
+ * a top-level copy is ignored). Each miss caches a fresh ref, and an evicted ref is released only after the runs that
+ * hold it are done (app-state-cache.js). Cleared when the engine worker restarts.
+ */
+appStates = createAppStateCache({
+  cache: (ref, appState) => engine.cacheAppState(ref, appState),
+  release: ref => engine.releaseAppState(ref),
+  appStateOf: (weapon, statuses) => buildAppState(store.get().ctx.data, weapon, { externalStatuses: statuses }),
+  max: MAX_APP_STATES,
+});
 
 // ---------- toasts and focus requests (consumed by React components) ----------
 
@@ -355,29 +384,6 @@ function setGallery(patch) {
 
 // ---------- engine plumbing ----------
 
-let nextRef = 1;
-
-function ensureAppState(weapon) {
-  const hit = appStates.get(weapon.name);
-  if (hit) {
-    appStates.delete(weapon.name);
-    appStates.set(weapon.name, hit);
-    return hit.promise;
-  }
-  let ref;
-  if (appStates.size >= MAX_APP_STATES) {
-    const [oldest, entry] = appStates.entries().next().value;
-    appStates.delete(oldest);
-    ref = entry.ref;
-  } else {
-    ref = nextRef++;
-  }
-  const entry = { ref, promise: engine.cacheAppState(ref, buildAppState(store.get().ctx.data, weapon)).then(() => ref) };
-  entry.promise.catch(() => { if (appStates.get(weapon.name) === entry) appStates.delete(weapon.name); });
-  appStates.set(weapon.name, entry);
-  return entry.promise;
-}
-
 let simGen = 0;
 let simTimer = null;
 /** Scene mode only: makes the next simulations fail, to capture the error state. */
@@ -415,8 +421,7 @@ async function runSim() {
     const weapon = ctx.weaponByName.get(build.weaponName);
     if (!weapon) throw new Error(`Unknown weapon: ${build.weaponName}`);
     if (injectedSimError) throw new Error(injectedSimError);
-    const ref = await ensureAppState(weapon);
-    const results = await engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false }), M.SIM_SEEDS);
+    const results = await appStates.withAppState(weapon, build.externalStatuses, ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false }), M.SIM_SEEDS));
     if (gen !== simGen) return null;
     const summary = M.summarizeRuns(results, build.simTime);
     if (!summary.ok) throw new Error(summary.error);
@@ -431,8 +436,7 @@ async function runSim() {
     flushPendingPin();
     syncLastResult();
 
-    const ref2 = await ensureAppState(weapon);
-    const [debug] = await engine.simulate(engineInputFor(ctx, build, { appStateRef: ref2, debugLog: true }), [M.SIM_SEEDS[0]]);
+    const [debug] = await appStates.withAppState(weapon, build.externalStatuses, ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: true }), [M.SIM_SEEDS[0]]));
     if (gen !== simGen) return summary;
     const debugOk = debug && !debug.error && Array.isArray(debug.debugLog);
     store.set(s => ({
@@ -526,8 +530,7 @@ async function startSweep(slot) {
   setGallery({ tab: 'best' });
   store.set({ pickerOpen: true, selectedSlot: slot, preview: null });
   const dpsOf = async modSlots => {
-    const ref = await ensureAppState(weapon);
-    const runs = await engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false, modSlots }), M.SWEEP_SEEDS);
+    const runs = await appStates.withAppState(weapon, build.externalStatuses, ref => engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false, modSlots }), M.SWEEP_SEEDS));
     const s = M.summarizeRuns(runs, build.simTime);
     return s.ok ? s.avgDps : NaN;
   };
@@ -560,6 +563,121 @@ async function startSweep(slot) {
 function stopSweep(status) {
   sweepToken++;
   store.set(s => ({ sweep: s.sweep && status ? { ...s.sweep, status } : null }));
+}
+
+/** What had focus when the External buffs dialog opened. */
+let buffsOpener = null;
+
+// ---------- Auto build (docs/port-auto-build.md) ----------
+
+/** What had focus when the Auto build dialog opened. */
+let autoBuildOpener = null;
+let autoBuildToken = 0;
+/** The run in progress: { token, cancel }. */
+let autoBuildRun = null;
+let autoBuildSaveTimer = null;
+
+/** Cancel a running auto build (if any) and forget its result. */
+function stopAutoBuild() {
+  autoBuildToken++;
+  autoBuildRun?.cancel();
+  autoBuildRun = null;
+  if (store.get().autoBuild) store.set({ autoBuild: null });
+}
+
+/** Keep the library and write it (debounced) through the main process (auto-build.json in userData). */
+function setAutoBuildLibrary(library) {
+  store.set({ autoBuildLibrary: library });
+  clearTimeout(autoBuildSaveTimer);
+  autoBuildSaveTimer = setTimeout(() => {
+    Promise.resolve(uf.autoBuild?.set?.(AS.serializeAutoBuildLibrary(library))).catch(e => {
+      errors.push(`auto build settings: ${errorText(e)}`);
+      notify({ intent: 'warning', title: "Couldn't save the Auto build settings.", body: errorText(e) });
+    });
+  }, 300);
+}
+
+/** Apply a library change ({ library } or { error }) from auto-build-settings.js; returns it. */
+function autoBuildLibraryChange(r) {
+  if (r?.library) setAutoBuildLibrary(r.library);
+  return r;
+}
+
+async function loadAutoBuild(data) {
+  let raw = null;
+  // Smoke and scene runs start from the defaults (never from a previous run's edits).
+  if (!automated) {
+    try {
+      raw = await uf.autoBuild?.get?.();
+    } catch (e) {
+      errors.push(`auto build settings: ${errorText(e)}`);
+    }
+  }
+  store.set({ autoBuildLibrary: AS.normalizeAutoBuildLibrary(raw, data) });
+}
+
+async function startAutoBuild({ keepSlots = null, keepArcane = true } = {}) {
+  const s = store.get();
+  if (!s.build || !s.ctx || !s.autoBuildLibrary || s.autoBuild?.status === 'running') return false;
+  const build = s.build;
+  const config = AS.activeConfig(s.autoBuildLibrary);
+  const settings = config.settings;
+  const keep = new Set(keepSlots ?? M.GENERAL_SLOTS.filter(i => build.mods[i]));
+  // Kept slots are locks; the Exilus slot is never filled, so its mod always stays.
+  const start = {
+    mods: build.mods.map((m, i) => (i === M.EXILUS_SLOT || keep.has(i) ? m : null)),
+    arcanes: (build.arcanes ?? []).map(a => (keepArcane ? a : null)),
+  };
+  const token = ++autoBuildToken;
+  const patch = p => store.set(cur => (token === autoBuildToken && cur.autoBuild ? { autoBuild: { ...cur.autoBuild, ...p } } : null));
+  store.set({
+    autoBuildDropped: false,
+    autoBuild: {
+      status: 'running', percent: 0, step: 'Starting', detail: '', runs: 0, elapsedMs: 0, result: null, error: null,
+      startSnapshot: M.snapshotOf(build), configName: config.name, timeLimit: settings.timeLimitSeconds,
+    },
+  });
+  announce('Auto build started.');
+  let run;
+  try {
+    run = startAutoBuildWorker({
+      build: JSON.parse(JSON.stringify(build)), start, settings, cores: s.autoBuildLibrary.cores,
+      onProgress: p => patch({ percent: p.percent, step: p.step, detail: p.detail || store.get().autoBuild?.detail || '', runs: p.runs, elapsedMs: p.elapsedMs }),
+    });
+  } catch (e) {
+    patch({ status: 'error', error: errorText(e) });
+    return false;
+  }
+  autoBuildRun = { token, cancel: run.cancel };
+  try {
+    const r = await run.promise;
+    if (token !== autoBuildToken) return false;
+    if (r.status === 'cancelled') {
+      patch({ status: 'cancelled' });
+      announce('Auto build cancelled. Nothing changed.');
+      return false;
+    }
+    patch({ status: 'done', percent: 100, result: r.result, elapsedMs: r.result.elapsedMs });
+    const g = gainText(r.result.before, r.result.after);
+    const text = r.result.changed
+      ? `Auto build finished: ${fmtInt(r.result.before)} → ${fmtInt(r.result.after)} DPS${g ? ` (${g})` : ''}`
+      : 'Auto build finished: nothing better found';
+    if (store.get().autoBuildOpen) announce(r.result.changed ? `${text}. Apply or Discard.` : `${text}.`);
+    else {
+      // Closed while it ran: a toast says so, with a way back to the result.
+      announce(`${text}.`);
+      notify({ intent: r.result.changed ? 'success' : 'info', title: text, action: { label: 'Review', run: () => actions.setAutoBuildOpen(true) } });
+    }
+    return true;
+  } catch (e) {
+    if (token !== autoBuildToken) return false;
+    patch({ status: 'error', error: errorText(e) });
+    announce(`Auto build failed: ${errorText(e)}`);
+    if (!store.get().autoBuildOpen) notify({ intent: 'error', title: 'Auto build failed.', body: errorText(e), action: { label: 'Review', run: () => actions.setAutoBuildOpen(true) } });
+    return false;
+  } finally {
+    if (autoBuildRun?.token === token) autoBuildRun = null;
+  }
 }
 
 // ---------- build edits and history ----------
@@ -616,6 +734,8 @@ function openWorkingBuild(build, notices = []) {
   pickerOpener = null;
   const s = store.get();
   if (s.sweep) stopSweep(null);
+  // A run belongs to the build it started on (the site cancels too when the selected build changes).
+  stopAutoBuild();
   pendingPin = false;
   store.set({
     build,
@@ -629,6 +749,8 @@ function openWorkingBuild(build, notices = []) {
     pickerAuto: false,
     preview: null,
     targetOpen: false,
+    buffsOpen: false,
+    autoBuildOpen: false,
     pickup: null,
     drag: null,
     gallery: s.gallery.tab === 'best' ? { ...s.gallery, tab: 'mods' } : s.gallery,
@@ -1258,6 +1380,229 @@ export const actions = {
     });
   },
 
+  // External buffs and statuses (docs/port-external-buffs.md). Each edit is one undo step and re-simulates.
+
+  /**
+   * Open or close the External buffs dialog. Closing puts focus back on what opened it (the Readout's Buffs link,
+   * which shows the summary once something is set), as the dialog has no DialogTrigger to do it.
+   */
+  setBuffsOpen(open) {
+    const was = store.get().buffsOpen;
+    if (Boolean(open) === was) return;
+    if (open) buffsOpener = document.activeElement;
+    const sum = store.get().sim.summary;
+    store.set({ buffsOpen: Boolean(open), targetOpen: false, ...(open ? { buffsBaseline: sum?.ok ? sum.avgDps : null } : {}) });
+    if (!open) {
+      const el = buffsOpener;
+      buffsOpener = null;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (focusable(el) && !el.closest?.('[role="dialog"], [role="alertdialog"]')) el.focus();
+        else focusLater('buffs-open');
+      }));
+    }
+  },
+
+  /** Add a buff row (from the add form): a row with the same buff (and element, and source) is replaced. */
+  addExternalBuff(row) {
+    const { ctx } = store.get();
+    const clean = X.normalizeBuff(row, ctx.data);
+    if (!clean) return false;
+    const changed = updateBuild(b => ({ ...b, externalBuffs: X.addBuff(b.externalBuffs ?? [], clean) }));
+    if (changed) announce(`Added ${X.buffLine(clean, ctx.data)}.`);
+    return changed;
+  },
+
+  /** Add every row a source (ability, arcane, shard, ...) gives this weapon, as one undo step. */
+  addSourceBuffs(rows) {
+    const { ctx } = store.get();
+    const clean = X.normalizeBuffList(rows, ctx.data);
+    if (!clean.length) return false;
+    const changed = updateBuild(b => ({ ...b, externalBuffs: X.addSourceRows(b.externalBuffs ?? [], clean) }));
+    if (changed) announce(`Added ${clean.map(r => X.buffLine(r, ctx.data)).join(', ')}.`);
+    return changed;
+  },
+
+  removeExternalBuff(index) {
+    const { ctx, build } = store.get();
+    const row = build.externalBuffs?.[index];
+    if (!row) return false;
+    const changed = updateBuild(b => ({ ...b, externalBuffs: X.removeBuffAt(b.externalBuffs, index) }));
+    if (changed) announce(`Removed ${X.buffLine(row, ctx.data)}.`);
+    return changed;
+  },
+
+  /** Replace the whole buff list (a preset applied, or cleared). */
+  setExternalBuffs(list) {
+    const { ctx } = store.get();
+    const clean = X.normalizeBuffList(list, ctx.data);
+    return updateBuild(b => (JSON.stringify(b.externalBuffs ?? []) === JSON.stringify(clean) ? b : { ...b, externalBuffs: clean }));
+  },
+
+  /** Remove every external buff and status, as one undo step. */
+  clearExternal() {
+    const changed = updateBuild(b => (M.hasExternal(b) ? { ...b, externalBuffs: [], externalStatuses: [] } : b));
+    if (changed) announce('Removed every external buff and status.');
+    return changed;
+  },
+
+  /** Add a status already on the target, or change its stacks (one row per status). */
+  addExternalStatus(type, stacks) {
+    const changed = updateBuild(b => {
+      const next = X.addStatus(b.externalStatuses ?? [], type, stacks);
+      return JSON.stringify(next) === JSON.stringify(b.externalStatuses ?? []) ? b : { ...b, externalStatuses: next };
+    });
+    if (changed) announce(`Target starts with ${type} ×${Math.round(Number(stacks))}.`);
+    return changed;
+  },
+
+  removeExternalStatus(type) {
+    const changed = updateBuild(b => ((b.externalStatuses ?? []).some(s => s.type === type)
+      ? { ...b, externalStatuses: b.externalStatuses.filter(s => s.type !== type) } : b));
+    if (changed) announce(`Removed ${type} from the target.`);
+    return changed;
+  },
+
+  /**
+   * Apply a preset (null: None, which clears the list). `mode` 'overwrite' replaces the list with the preset's
+   * rows that suit this weapon; 'add' merges them in, summing matching rows (the site's two choices).
+   */
+  applyBuffPreset(id, mode = 'overwrite') {
+    const { ctx, build, buffPresets } = store.get();
+    if (id == null) return actions.setExternalBuffs([]);
+    const preset = buffPresets.presets.find(p => p.id === id);
+    if (!preset) return false;
+    const weapon = ctx.weaponByName.get(build.weaponName);
+    const rows = X.presetRowsFor({ ...preset, buffs: X.normalizeBuffList(preset.buffs, ctx.data) }, ctx.data, weapon);
+    const next = mode === 'add' ? X.mergeBuffLists(build.externalBuffs ?? [], rows, ctx.data) : rows;
+    const changed = actions.setExternalBuffs(next);
+    if (changed) announce(`Applied the buff preset "${preset.name}".`);
+    return changed;
+  },
+
+  /**
+   * Save the current buffs as a preset. Resolves to { preset } once stored, { confirm, existing } when a preset
+   * of that name exists (call again with replace: true), or { error } with the message to show.
+   */
+  async saveBuffPreset(name, { replace = false } = {}) {
+    const { build, buffPresets } = store.get();
+    const r = X.savePreset(buffPresets, name, build.externalBuffs ?? [], { replace });
+    if (!r.library) return r;
+    return storeBuffPresets(r.library).then(() => ({ preset: r.preset }), e => ({ error: `Couldn't save buff presets: ${errorText(e)}` }));
+  },
+
+  async deleteBuffPreset(id) {
+    const { buffPresets } = store.get();
+    return storeBuffPresets(X.deletePreset(buffPresets, id)).then(() => ({ ok: true }), e => ({ error: `Couldn't save buff presets: ${errorText(e)}` }));
+  },
+
+  // ---- Auto build (docs/port-auto-build.md; docs/declutter-spec.md 4) ----
+
+  /** Open or close the Auto build dialog; closing returns focus to what opened it. A run keeps going when it closes. */
+  setAutoBuildOpen(open) {
+    const s = store.get();
+    if (Boolean(open) === s.autoBuildOpen || !s.autoBuildLibrary) return;
+    if (open) autoBuildOpener = document.activeElement;
+    // A finished run whose build has changed since is out of date: start over, and say so on the Run tab.
+    const stale = open && s.autoBuild?.status === 'done' && M.snapshotOf(s.build) !== s.autoBuild.startSnapshot;
+    if (open && s.autoBuild && s.autoBuild.status !== 'running' && M.snapshotOf(s.build) !== s.autoBuild.startSnapshot) store.set({ autoBuild: null });
+    store.set({ autoBuildOpen: Boolean(open), targetOpen: false, autoBuildDropped: stale });
+    if (!open) {
+      const el = autoBuildOpener;
+      autoBuildOpener = null;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (focusable(el) && !el.closest?.('[role="dialog"], [role="alertdialog"]')) el.focus();
+        else focusLater('auto-build-open');
+      }));
+    }
+  },
+  toggleAutoBuild() { actions.setAutoBuildOpen(!store.get().autoBuildOpen); },
+  selectAutoBuildConfig(id) { return autoBuildLibraryChange(AS.setActiveConfig(store.get().autoBuildLibrary, id)); },
+  /** Change the active config's settings (refused for the locked Default). */
+  updateAutoBuildSettings(patch) {
+    const { autoBuildLibrary: lib, ctx } = store.get();
+    return autoBuildLibraryChange(AS.updateConfigSettings(lib, lib.activeConfigId, patch, ctx.data));
+  },
+  /** A new config with the active settings; it becomes active, so it can be edited right away. */
+  addAutoBuildConfig(name) {
+    const { autoBuildLibrary: lib, ctx } = store.get();
+    const r = AS.addConfig(lib, name, AS.effectiveSettings(lib), ctx.data);
+    return r.library ? autoBuildLibraryChange({ ...r, library: { ...r.library, activeConfigId: r.id } }) : r;
+  },
+  /** "Copy of X" of a config (the active one by default); the copy becomes active. */
+  duplicateAutoBuildConfig(id) {
+    const { autoBuildLibrary: lib, ctx } = store.get();
+    const r = AS.duplicateConfig(lib, id ?? lib.activeConfigId, ctx.data);
+    return r.library ? autoBuildLibraryChange({ ...r, library: { ...r.library, activeConfigId: r.id } }) : r;
+  },
+  renameAutoBuildConfig(id, name) { return autoBuildLibraryChange(AS.renameConfig(store.get().autoBuildLibrary, id, name)); },
+  deleteAutoBuildConfig(id) { return autoBuildLibraryChange(AS.deleteConfig(store.get().autoBuildLibrary, id)); },
+  moveAutoBuildConfig(id, dir) { return autoBuildLibraryChange(AS.moveConfig(store.get().autoBuildLibrary, id, dir)); },
+  /** Engine workers for a run (a device preference, not part of a config); null is automatic. */
+  setAutoBuildCores(n) {
+    const lib = store.get().autoBuildLibrary;
+    const cores = Number.isInteger(n) && n >= 1 && n <= 64 ? n : null;
+    if (lib.cores !== cores) setAutoBuildLibrary({ ...lib, cores });
+  },
+  /** Run on the open build. `keepSlots`: general slots whose mods stay (default: every filled one); `keepArcane`. */
+  startAutoBuild(opts) { return startAutoBuild(opts); },
+  cancelAutoBuild() {
+    const ab = store.get().autoBuild;
+    if (ab?.status !== 'running' || !autoBuildRun) return;
+    store.set({ autoBuild: { ...ab, step: 'Cancelling...' } });
+    autoBuildRun.cancel();
+  },
+  /** Forget a finished run (its result is not applied). */
+  discardAutoBuild() {
+    if (!store.get().autoBuild || store.get().autoBuild.status === 'running') return;
+    store.set({ autoBuild: null });
+    announce('Discarded the Auto build result.');
+  },
+  /**
+   * Apply the proposed build as one undoable edit, close the dialog, and say what changed in a toast with Undo. Refused
+   * when the build changed while the run was going (the result belongs to the build it started from).
+   */
+  applyAutoBuild() {
+    const s = store.get();
+    const ab = s.autoBuild;
+    if (ab?.status !== 'done' || !ab.result) return false;
+    if (M.snapshotOf(s.build) !== ab.startSnapshot) {
+      notify({ intent: 'warning', title: 'The build changed while Auto build ran.', body: 'Run it again to get a result for the build as it is now.' });
+      return false;
+    }
+    const r = ab.result;
+    if (!r.changed) {
+      store.set({ autoBuild: null });
+      actions.setAutoBuildOpen(false);
+      return false;
+    }
+    let next = { ...s.build, mods: r.mods.map(m => (m ? { name: m.name, rank: m.rank } : null)) };
+    (r.arcanes ?? []).forEach((a, i) => { next = M.setArcane(s.ctx, next, i, a ?? null); });
+    // Cost Control's Forma plan: the slot polarities that make the result fit, in the same undo step.
+    next = M.withFormaPlan(s.ctx, next, r.formaPlan);
+    commitBuild(next);
+    store.set({ autoBuild: null });
+    actions.setAutoBuildOpen(false);
+    const after = M.snapshotOf(store.get().build);
+    const g = gainText(r.before, r.after);
+    const title = `Auto build applied: ${fmtInt(r.before)} → ${fmtInt(r.after)} DPS${g ? ` (${g})` : ''}`;
+    const forma = r.formaPlan?.length ? `${r.formaPlan.length} Forma: ${M.formaPlanText(r.formaPlan).join(', ')}.` : null;
+    announce(`${title}.${forma ? ` ${forma}` : ''}`);
+    notify({
+      intent: 'success',
+      title,
+      body: forma,
+      action: {
+        label: 'Undo',
+        run: () => {
+          if (M.snapshotOf(store.get().build) === after) actions.undo();
+          else notify({ intent: 'info', title: "Couldn't undo: the build changed since. Use Ctrl+Z to step back." });
+        },
+      },
+      ctrlZ: true,
+    });
+    return true;
+  },
+
   setDuration(seconds) {
     if (!M.DURATIONS.includes(seconds)) return;
     updateBuild(b => (b.simTime === seconds ? b : { ...b, simTime: seconds }));
@@ -1371,7 +1716,7 @@ export const actions = {
       if (s.sim.status !== 'pending' && s.sim.status !== 'running') scheduleSim(0);
       return false;
     }
-    const pin = M.makePin({ ...s.build, name: M.buildToSave(s.build).name }, s.sim.summary, crypto.randomUUID(), derived().stats?.mode ?? null);
+    const pin = M.makePin({ ...s.build, name: M.buildToSave(s.build).name }, s.sim.summary, crypto.randomUUID(), derived().stats?.mode ?? null, s.ctx.data);
     // The same unchanged result twice is one pin.
     if (s.pins.some(p => M.samePin(p, pin))) {
       announce('Already pinned.');
@@ -1548,6 +1893,21 @@ async function fetchJson(url, onProgress) {
 
 const mb = n => `${(n / 1048576).toFixed(1)} MB`;
 
+/** Write the buff preset library through the main process (buff-presets.json in userData), then keep what it stored. */
+async function storeBuffPresets(library) {
+  const saved = await uf.buffPresets.set(library);
+  store.set({ buffPresets: X.normalizePresetLibrary(saved ?? library) });
+}
+
+async function loadBuffPresets() {
+  try {
+    const raw = await uf.buffPresets?.get?.();
+    store.set({ buffPresets: X.normalizePresetLibrary(raw) });
+  } catch (e) {
+    errors.push(`buff presets: ${errorText(e)}`);
+  }
+}
+
 async function loadSavedBuilds() {
   try {
     const list = await uf.builds.list();
@@ -1569,6 +1929,9 @@ function reportUnexpected(message, stack) {
 
 function installErrorHandlers() {
   window.addEventListener('error', e => {
+    // Not an error: the browser's note that a ResizeObserver callback (Fluent's popup positioning re-measuring a
+    // list as it filters) resized an observed element again within one frame; the rest is delivered next frame.
+    if (/^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/.test(String(e.message ?? ''))) return;
     errors.push(`error: ${e.message}`);
     reportUnexpected(e.message, e.error?.stack);
   });
@@ -1624,6 +1987,8 @@ export async function boot({ onReady } = {}) {
     await engineReady;
     loading({ text: 'Reading your builds…' });
     const savedBuilds = await loadSavedBuilds();
+    await loadBuffPresets();
+    await loadAutoBuild(data);
 
     let build = M.createBuild(ctx);
     let warnings = [];

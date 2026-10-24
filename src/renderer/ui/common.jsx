@@ -30,9 +30,13 @@ const useStyles = makeStyles({
  * "▲ 2.1%": a signed change as coloured text with an arrow, never colour alone and never a tinted pill
  * (docs/declutter-spec.md 3). Nothing when there is no change.
  */
-export function DeltaText({ delta, className, title }) {
+export function DeltaText({ delta, className, title, zeroText = null }) {
   const styles = useStyles();
   if (delta == null || !Number.isFinite(delta)) return null;
+  // A change that rounds to 0% is no change: neutral text (or nothing), never a red "▼ 0%".
+  if (Math.abs(delta) < 0.0005) {
+    return zeroText ? <span className={mergeClasses(styles.numeric, className)} title={title} data-testid="dps-delta-zero">{zeroText}</span> : null;
+  }
   const up = delta > 0;
   const size = fmtSignedPct(Math.abs(delta)).replace(/^\+/, '');
   return (

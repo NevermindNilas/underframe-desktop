@@ -14,6 +14,8 @@ import { OcrDialog } from './OcrDialog.jsx';
 import { DropOverlay } from './DropOverlay.jsx';
 import { Dialogs } from './Dialogs.jsx';
 import { CompareDialog } from './CompareDialog.jsx';
+import { BuffsDialog } from './BuffsDialog.jsx';
+import { AutoBuildDialog } from './AutoBuildDialog.jsx';
 import { Announcer } from './Announcer.jsx';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { useShortcuts } from './shortcuts.js';
@@ -107,6 +109,8 @@ function Shell() {
       <DropOverlay />
       <Dialogs />
       <CompareDialog />
+      <BuffsDialog />
+      <AutoBuildDialog />
       <Announcer />
     </div>
   );

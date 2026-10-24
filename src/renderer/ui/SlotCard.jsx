@@ -165,10 +165,11 @@ const useStyles = makeStyles({
     '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', borderTop: '1px solid CanvasText' },
   },
   // With the actions shown the strip is [− n/max +] … [best ×]: the pips give way to the number, so nothing overlaps
-  // even on 10-rank mods in a 150 px slot.
-  stripActive: { justifyContent: 'space-between', height: '28px', pointerEvents: 'auto', gap: '2px' },
+  // even on 10-rank mods in a 150 px slot. Only the buttons take the pointer: on a 56 px slot the strip covers the
+  // middle of the card, and a click between the buttons must still reach the slot.
+  stripActive: { justifyContent: 'space-between', height: '28px', gap: '2px' },
   rankText: { color: OVERLAY.neutral, fontVariantNumeric: 'tabular-nums', '@media (forced-colors: active)': { color: 'CanvasText' } },
-  actionGroup: { display: 'inline-flex', alignItems: 'center', gap: '2px' },
+  actionGroup: { display: 'inline-flex', alignItems: 'center', gap: '2px', '& button': { pointerEvents: 'auto' } },
   action: {
     minWidth: '24px',
     width: '24px',

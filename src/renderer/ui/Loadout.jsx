@@ -18,6 +18,7 @@ import { arcaneSlotCount } from '../../shared/arcanes.js';
 import { isKitgun } from '../../shared/mods.js';
 import { previewSlots } from '../dnd.js';
 import { ArcaneSlot, ModSlot } from './SlotCard.jsx';
+import { AutoBuildButton } from './AutoBuildDialog.jsx';
 
 const useStyles = makeStyles({
   loadout: {
@@ -269,6 +270,8 @@ export function CapacityMeter({ compact = false }) {
       {cap.over ? <Caption1 className={styles.over}><ErrorCircleRegular aria-hidden="true" /> {cap.over} over</Caption1> : null}
       {/* Capacity isn't doubled: say so where the number is (the menu toggles it). */}
       {!cap.over && !capacity.catalyst ? <Caption1 className={styles.meterLabel} data-testid="catalyst-off">No Catalyst</Caption1> : null}
+      {/* Auto build's one quiet entry point (docs/declutter-spec.md 4), next to the build mechanics. */}
+      <AutoBuildButton />
       <CapacityMenu />
     </div>
   );

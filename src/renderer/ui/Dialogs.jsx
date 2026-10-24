@@ -34,6 +34,7 @@ export const SHORTCUTS = [
     ['Shift+Enter (slot)', 'Find the best mod for this slot'],
     ['Alt+Shift+Arrow (slot)', 'Swap with the neighbouring slot'],
     ['Shift+F10 (slot or card)', 'Slot or card menu'],
+    ['Ctrl+Shift+A', 'Auto build: fill the empty slots with the best mods'],
   ]],
   ['Import', [
     ['Ctrl+I', 'Import a build from a screenshot file'],

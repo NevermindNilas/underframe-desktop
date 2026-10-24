@@ -1,5 +1,6 @@
 // The Readout (docs/declutter-spec.md 4): what the build does, in one column. The DPS hero (delta as text, TTK),
-// the target line (Change opens the target popover) with the run menu, the honesty line, the weapon stats sheet
+// the target line (Change opens the target popover; Buffs, or the buffs summary while some are set, the External
+// buffs dialog) with the run menu, the honesty line, the weapon stats sheet
 // with damage by type, Compare (pins, Expand opens the full table) and the credit line. On the layer tone, no
 // cards, no pills.
 import { useMemo } from 'react';
@@ -17,6 +18,7 @@ import {
   DURATIONS, INCARNON_NOTE, SIM_SEEDS, compareRows, isIncarnonMode, resultDelta, simErrorText, targetLabel, ttkText,
 } from '../model.js';
 import { fmtInt } from '../format.js';
+import { buffLine, statusLine } from '../../shared/external-buffs.js';
 import { DISPLAY_FONT } from '../theme.js';
 import { DeltaText, hasNoStats } from './common.jsx';
 import { StatSheet } from './StatSheet.jsx';
@@ -70,6 +72,8 @@ const useStyles = makeStyles({
   pinList: { listStyle: 'none', margin: 0, padding: 0 },
 });
 
+const NONE = Object.freeze([]);
+
 /** What isn't modelled in this build: mods, arcanes, the incarnon form. Null when everything is. */
 function useHonesty() {
   const { partialMap, stats } = useDerived();
@@ -79,8 +83,15 @@ function useHonesty() {
   const entries = [...partialMap.entries()].filter(([name]) => mods.some(m => m?.name === name));
   const engineOnly = mods.filter(m => m && hasNoStats(ctx, m.name)).map(m => m.name);
   const arcaneNotes = (stats?.arcaneNotes ?? []).filter(n => n.level !== 'inactive');
-  const count = entries.length + engineOnly.length + arcaneNotes.length + (incarnon ? 1 : 0);
-  return count ? { entries, engineOnly, arcaneNotes, incarnon, count } : null;
+  // External buffs this app does not simulate (melee, AoE, Hall of Mirrors, ...), kept on the build.
+  const externalNotes = stats?.externalNotes ?? [];
+  // The external buffs and target statuses the result includes (they are simulated; the popover names them).
+  const ctxData = ctx.data;
+  const buffs = useApp(s => s.build.externalBuffs ?? NONE);
+  const statuses = useApp(s => s.build.externalStatuses ?? NONE);
+  const applied = [...buffs.map(b => buffLine(b, ctxData)), ...statuses.map(statusLine)].join('; ');
+  const count = entries.length + engineOnly.length + arcaneNotes.length + externalNotes.length + (incarnon ? 1 : 0);
+  return count ? { entries, engineOnly, arcaneNotes, externalNotes, incarnon, count, applied } : null;
 }
 
 /** "◐ Partially simulated: 2 mods · Details" (spec 4): a neutral line, the list in a popover. */
@@ -88,7 +99,7 @@ function HonestyLine() {
   const styles = useStyles();
   const h = useHonesty();
   if (!h) return null;
-  const things = h.entries.length + h.engineOnly.length + h.arcaneNotes.length;
+  const things = h.entries.length + h.engineOnly.length + h.arcaneNotes.length + h.externalNotes.length;
   const what = [things ? `${things} ${things === 1 ? 'item' : 'items'} approximated` : null, h.incarnon ? 'incarnon form not modelled' : null].filter(Boolean).join(', ');
   return (
     <div className={styles.honesty} data-testid="honesty-line">
@@ -105,7 +116,9 @@ function HonestyLine() {
             {h.entries.map(([name, list]) => <li key={name}><Body1>{name}: {list.join(', ')}</Body1></li>)}
             {h.engineOnly.map(name => <li key={`e-${name}`}><Body1>{name}: no numeric stats in the data; it counts only if the engine models it itself.</Body1></li>)}
             {h.arcaneNotes.map(n => <li key={`${n.name}-${n.level}`}><Body1>{n.name}: {n.level === 'none' ? 'not simulated. ' : 'partially simulated. '}{n.text}</Body1></li>)}
+            {h.externalNotes.map((n, i) => <li key={`x-${i}-${n.name}`}><Body1>External buff {n.name}: {n.text}</Body1></li>)}
           </ul>
+          {h.applied ? <Body1 as="p" style={{ marginBottom: 0 }} data-testid="honesty-external">Also applied: {h.applied}. Buffs lists them.</Body1> : null}
         </PopoverSurface>
       </Popover>
     </div>
@@ -141,6 +154,32 @@ function RunMenu() {
   );
 }
 
+/**
+ * The External buffs entry, on the target line: a quiet "Buffs" link at rest; while buffs or target statuses are
+ * set, the same link is their summary ("Buffs: 3 · Statuses: 1"), so the Readout gains no line.
+ */
+function BuffsLink() {
+  const styles = useStyles();
+  const buffs = useApp(s => s.build.externalBuffs?.length ?? 0);
+  const statuses = useApp(s => s.build.externalStatuses?.length ?? 0);
+  const summary = [buffs ? `Buffs: ${buffs}` : null, statuses ? `Statuses: ${statuses}` : null].filter(Boolean).join(' · ');
+  const spoken = [buffs ? `${buffs} external ${buffs === 1 ? 'buff' : 'buffs'}` : null, statuses ? `${statuses} target ${statuses === 1 ? 'status' : 'statuses'}` : null].filter(Boolean).join(' and ');
+  return (
+    <Link
+      as="button"
+      className={styles.linkTarget}
+      data-focus-id="buffs-open"
+      data-testid={summary ? 'buffs-summary' : 'buffs-open'}
+      // The accessible name starts with the visible text (WCAG 2.5.3, label in name).
+      aria-label={summary ? `${summary}, ${spoken}. Edit external buffs and target statuses` : 'Buffs: external buffs and target statuses'}
+      title={summary ? `${spoken}: edit` : undefined}
+      onClick={() => actions.setBuffsOpen(true)}
+    >
+      {summary || 'Buffs'}
+    </Link>
+  );
+}
+
 function TargetLine() {
   const styles = useStyles();
   const enemyCfg = useApp(s => s.build.enemy);
@@ -157,6 +196,7 @@ function TargetLine() {
           <TargetForm />
         </PopoverSurface>
       </Popover>
+      <BuffsLink />
       <span className={styles.spacer} />
       <RunMenu />
     </div>
@@ -166,6 +206,12 @@ function TargetLine() {
 function Hero({ compact }) {
   const styles = useStyles();
   const sim = useApp(s => s.sim);
+  // The DPS is no longer the weapon's alone while external buffs or target statuses are set: the caption says so.
+  const external = useApp(s => {
+    const b = s.build.externalBuffs?.length ?? 0;
+    const t = s.build.externalStatuses?.length ?? 0;
+    return b && t ? 'external buffs and statuses' : b ? 'external buffs' : t ? 'target statuses' : '';
+  });
   const { simKey: key } = useDerived();
   const s = sim.summary;
   const current = sim.key === key;
@@ -178,7 +224,7 @@ function Hero({ compact }) {
     <>
       <div className={styles.hero} aria-busy={busy || undefined}>
         <div className={styles.heroLeft}>
-          <Caption1 className={styles.label}>Average DPS</Caption1>
+          <Caption1 className={styles.label} data-testid="avg-dps-label">Average DPS{external ? ` · with ${external}` : ''}</Caption1>
           <div className={styles.valueRow}>
             {firstLoad ? <Skeleton style={{ width: 180 }}><SkeletonItem size={compact ? 32 : 40} /></Skeleton> : (
               <LargeTitle className={styles.dps} style={compact ? { fontSize: 32, lineHeight: '40px' } : { fontSize: 40, lineHeight: '52px' }} data-testid="avg-dps">

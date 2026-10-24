@@ -3,9 +3,10 @@
 // Besides the flows (real clicks through the Picker, keyboard, OCR, save), it checks the declutter targets of
 // docs/declutter-spec.md 7: every weapon stat row on screen and unclipped, the controls at rest under a cap, few
 // tab stops before the first slot, no gallery at rest, no tinted pills, no text under 12 px.
-import { ARCANE_SLOT, resolvePresetName, ttkText } from './model.js';
+import { ARCANE_SLOT, buildCapacity, resolvePresetName, ttkText } from './model.js';
 import { clearToasts } from './controller.js';
 import * as O from './ocr-import.js';
+import * as AS from '../shared/auto-build-settings.js';
 
 export const SMOKE_PLAN = {
   weapon: 'Braton Prime',
@@ -560,6 +561,313 @@ async function checkCompare(app, errors, checks) {
   await waitFor(() => !$('[data-testid="compare-grid"]'), 1500);
 }
 
+/** Pointer targets under 24x24 inside an element (buttons, tabs, comboboxes, links), as "name WxH". */
+function smallTargetsIn(root) {
+  const out = [];
+  for (const el of root?.querySelectorAll('button, [role="tab"], [role="combobox"], a[href]') ?? []) {
+    if (!painted(el) || el.closest('[data-inline-link]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width && (r.width < 24 || r.height < 24)) out.push(`${el.getAttribute('aria-label') ?? el.textContent.trim().slice(0, 30)} ${Math.round(r.width)}x${Math.round(r.height)}`);
+  }
+  return out;
+}
+
+/** Regions inside an element that scroll (content taller than the box with overflow auto or scroll). */
+function scrollRegionsIn(root) {
+  const all = [root, ...(root?.querySelectorAll('*') ?? [])].filter(Boolean);
+  return all.filter(el => {
+    const o = getComputedStyle(el).overflowY;
+    return (o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight + 2 && painted(el);
+  }).map(el => el.dataset.testid ?? el.getAttribute('aria-label') ?? String(el.className).split(' ')[0]);
+}
+
+/** A dialog's pointer targets and scroll regions (docs/declutter-spec.md 3 and 8): 24 px targets, one scroller. */
+async function checkDialogLayout(dialog, what, errors, checks) {
+  // Measure the settled dialog: its open animation scales the surface for a moment.
+  await waitFor(() => !dialog.getAnimations({ subtree: true }).some(x => x.playState === 'running'), 3000);
+  const small = smallTargetsIn(dialog);
+  const scrolls = scrollRegionsIn(dialog);
+  checks[`${what}SmallTargets`] = small;
+  checks[`${what}ScrollRegions`] = scrolls.length;
+  if (small.length) errors.push(`${what}: pointer targets under 24x24 in the dialog: ${small.join(', ')}`);
+  if (scrolls.length > 1) errors.push(`${what}: ${scrolls.length} scroll regions in the dialog (at most 1): ${scrolls.join(', ')}`);
+}
+
+const testIdOfFocus = () => document.activeElement?.dataset?.testid ?? document.activeElement?.id ?? document.activeElement?.tagName;
+
+/**
+ * External buffs (docs/port-external-buffs.md) with REAL clicks: Buffs in the Readout opens the dialog with focus in
+ * the buff search; choose External Fire Rate, type 60, Add: the DPS rises and the footer says so; remove it with the
+ * keyboard (focus stays in the list): the DPS is back to the same number; a real Ctrl+Z and Ctrl+Y while the dialog
+ * is open; add Viral x10 on the target; Remove all, then its inline Undo; Close: the Readout's summary line (its name
+ * starts with its text) and the hero caption say so, and Edit reopens. Cleared afterwards.
+ */
+async function checkBuffs(app, errors, checks) {
+  const { store, actions, uf } = app;
+  const current = () => {
+    const s = store.get();
+    return s.sim.status === 'done' && s.sim.key === app.simKey() && s.sim.summary?.ok ? s.sim.summary.avgDps : null;
+  };
+  const settledDps = () => waitFor(current, 15000);
+  await actions.runNow();
+  const base = await settledDps();
+  if (!base) { errors.push('buffs: no baseline result'); return; }
+  if (!(await realClick(app, $('[data-testid="buffs-open"]'), errors, 'Buffs link'))) return;
+  const dialog = await waitFor(() => $('[data-testid="buffs-dialog"]'), 2000);
+  if (!dialog) { errors.push('buffs: a real click on Buffs did not open the dialog'); return; }
+  if (!/No external statuses configured\./.test(dialog.textContent)) errors.push('buffs: the empty statuses text is missing');
+  const combo = $('[data-testid="buff-type"]');
+  checks.buffsFocusOnOpen = await waitFor(() => (document.activeElement === combo ? 'buff-type' : null), 1500) ?? testIdOfFocus();
+  if (checks.buffsFocusOnOpen !== 'buff-type') errors.push(`buffs: the dialog opened with focus on ${checks.buffsFocusOnOpen}, not the buff search`);
+  if (document.getElementById(dialog.getAttribute('aria-describedby') ?? '') == null) errors.push('buffs: the dialog\'s aria-describedby points at nothing');
+  await realClick(app, combo, errors, 'buff type combobox');
+  typeInto(combo, 'External Fire Rate');
+  const option = await waitFor(() => $$('[role="option"]').find(o => o.textContent.startsWith('External Fire Rate')), 2000);
+  if (!option) { errors.push('buffs: searching "External Fire Rate" shows no option'); return; }
+  await realClick(app, option, errors, 'External Fire Rate option');
+  const value = await waitFor(() => $('[data-testid="buff-value"]'), 1500);
+  if (!value) { errors.push('buffs: no value field for External Fire Rate'); return; }
+  await realClick(app, value, errors, 'buff value');
+  typeInto(value, '60');
+  await realClick(app, $('[data-testid="buff-add"]'), errors, 'Add buff');
+  const row = await waitFor(() => $('[data-testid="buff-row"]'), 2000);
+  checks.buffLine = row?.textContent ?? null;
+  if (!/External Fire Rate · \+60%/.test(row?.textContent ?? '')) errors.push(`buffs: the list shows "${row?.textContent ?? 'nothing'}", expected "External Fire Rate · +60%"`);
+  const raised = await settledDps();
+  checks.buffDps = raised ? `${Math.round(base)} -> ${Math.round(raised)}` : null;
+  if (!(raised > base * 1.2)) errors.push(`buffs: External Fire Rate 60% did not raise the DPS (${base} -> ${raised})`);
+  // The dialog covers the hero: its footer shows the change.
+  const footer = await waitFor(() => (/→/.test($('[data-testid="buffs-dps"]')?.textContent ?? '') ? $('[data-testid="buffs-dps"]') : null), 2000);
+  checks.buffsFooter = footer?.textContent ?? null;
+  if (!footer || !footer.querySelector('[data-testid="dps-delta"]')) errors.push(`buffs: the footer does not show the DPS change ("${$('[data-testid="buffs-dps"]')?.textContent ?? 'nothing'}")`);
+  await checkDialogLayout(dialog, 'buffs', errors, checks);
+  // Remove with the keyboard (Space on the button): focus stays in the dialog (the list heading once it is empty).
+  $('[data-testid="buff-remove"]')?.focus();
+  await uf.smokePress('Space');
+  if (!(await waitFor(() => !store.get().build.externalBuffs?.length, 2000))) errors.push('buffs: Enter on the remove button kept the buff');
+  const afterRemove = await waitFor(() => (document.activeElement && document.activeElement !== document.body ? testIdOfFocus() : null), 1500);
+  checks.buffsFocusAfterRemove = afterRemove ?? 'BODY';
+  if (!dialog.contains(document.activeElement)) errors.push(`buffs: removing a row moved focus to ${checks.buffsFocusAfterRemove}, outside the dialog`);
+  const back = await settledDps();
+  if (back !== base) errors.push(`buffs: removing the buff did not bring the DPS back (${base} -> ${back})`);
+  // A real Ctrl+Z and Ctrl+Y reach the build while the dialog is open (focus on a button, not a text field).
+  $('[data-testid="buffs-close"]')?.focus();
+  await uf.smokePress('z', ['control']);
+  if (!(await waitFor(() => store.get().build.externalBuffs?.length === 1, 2000))) errors.push('buffs: Ctrl+Z in the dialog did not bring the removed buff back');
+  await uf.smokePress('y', ['control']);
+  if (!(await waitFor(() => !store.get().build.externalBuffs?.length, 2000))) errors.push('buffs: Ctrl+Y in the dialog did not remove it again');
+  await settledDps();
+  await realClick(app, $('[data-testid="status-add"]'), errors, 'Add status');
+  const status = await waitFor(() => $('[data-testid="status-row"]'), 2000);
+  if (!/Viral ×10/.test(status?.textContent ?? '')) errors.push(`buffs: the status list shows "${status?.textContent ?? 'nothing'}", expected "Viral ×10"`);
+  const viral = await settledDps();
+  checks.statusDps = viral ? `${Math.round(base)} -> ${Math.round(viral)}` : null;
+  if (!(viral > base * 1.5)) errors.push(`buffs: Viral x10 on the target did not raise the DPS (${base} -> ${viral})`);
+  await capture(app.uf, 'buffs-dialog', errors);
+  // Remove all, then its inline Undo (focus moves to it).
+  await realClick(app, $('[data-testid="buffs-clear"]'), errors, 'Remove all');
+  const undo = await waitFor(() => $('[data-testid="buffs-undo-clear"]'), 2000);
+  if (!undo) errors.push('buffs: Remove all shows no inline Undo');
+  else {
+    if (!/Removed 1 status\./.test($('[data-testid="buffs-cleared"]')?.textContent ?? '')) errors.push(`buffs: Remove all says "${$('[data-testid="buffs-cleared"]')?.textContent}"`);
+    if (!(await waitFor(() => document.activeElement === undo, 1500))) errors.push(`buffs: after Remove all focus is on ${testIdOfFocus()}, not Undo`);
+    await realClick(app, undo, errors, 'Undo Remove all');
+    if (!(await waitFor(() => store.get().build.externalStatuses?.length === 1, 2000))) errors.push('buffs: the inline Undo did not restore the status');
+  }
+  await settledDps();
+  await realClick(app, $('[data-testid="buffs-close"]'), errors, 'Close buffs');
+  await waitFor(() => !$('[data-testid="buffs-dialog"]'), 2000);
+  await nextFrame();
+  await nextFrame();
+  if ($('[data-testid="buffs-dialog"]')) errors.push('buffs: Close did not close the dialog');
+  const summary = await waitFor(() => $('[data-testid="buffs-summary"]'), 1500);
+  checks.buffsSummary = summary?.textContent ?? null;
+  if (summary?.textContent !== 'Statuses: 1') errors.push(`buffs: the Readout summary says "${summary?.textContent ?? 'nothing'}", expected "Statuses: 1"`);
+  if (summary && !String(summary.getAttribute('aria-label') ?? '').startsWith(summary.textContent)) errors.push(`buffs: the summary's name "${summary.getAttribute('aria-label')}" does not start with its text`);
+  checks.heroCaption = $('[data-testid="avg-dps-label"]')?.textContent ?? null;
+  if (!/with target statuses/.test(checks.heroCaption ?? '')) errors.push(`buffs: the hero caption says "${checks.heroCaption}", not that statuses are applied`);
+  if ($('[data-testid="buffs-open"]')) errors.push('buffs: both the Buffs link and the summary are shown');
+  if (document.activeElement !== summary) errors.push(`buffs: closing the dialog left focus on ${focusId()}, not the summary link`);
+  await realClick(app, summary, errors, 'buffs summary');
+  if (!(await waitFor(() => $('[data-testid="buffs-dialog"]'), 2000))) errors.push('buffs: the summary link did not reopen the dialog');
+  actions.clearExternal();
+  actions.setBuffsOpen(false);
+  await waitFor(() => !$('[data-testid="buffs-dialog"]'), 2000);
+  await settledDps();
+  if (/with/.test($('[data-testid="avg-dps-label"]')?.textContent ?? '')) errors.push('buffs: the hero caption still mentions external buffs after clearing them');
+  log(`buffs: ${checks.buffDps} with fire rate, ${checks.statusDps} with Viral x10`);
+}
+
+/**
+ * Auto build (docs/port-auto-build.md) with REAL clicks on an empty Braton Prime: the Loadout's Auto build button opens
+ * the dialog with focus on Run; the Mods tab's search blacklists Serration (its card chip appears first, focus stays in
+ * the search), Delete on a chip moves focus to the next chip; Run with a short budget (smallest sample size, no
+ * refinement, 30 s limit; "Your Config" has Cost Control on): focus moves to Cancel, then to Apply; the result never
+ * holds Serration, shows the changes as cards and fits the capacity with the Forma it lists; Apply fills the build and
+ * its Forma (one undo step) and the Readout's DPS is the result's; on the now complete build Run is disabled; a real
+ * Ctrl+Z restores the empty build. Then a long run (the Default config) is cancelled mid-way: nothing changes and focus
+ * returns to Run. Close returns focus to the button.
+ */
+async function checkAutoBuild(app, errors, checks) {
+  const { store, actions, uf } = app;
+  const settled = () => waitFor(() => {
+    const s = store.get();
+    return s.sim.status === 'done' && s.sim.key === app.simKey() && s.sim.summary?.ok ? s.sim.summary.avgDps : null;
+  }, 15000);
+  await actions.newBuild({ force: true });
+  actions.closePicker({ focus: false });
+  await actions.runNow();
+  const emptyDps = await settled();
+  const emptyBuild = () => JSON.stringify({ mods: store.get().build.mods, pol: store.get().build.slotPolarities });
+  const empty = emptyBuild();
+  if (!emptyDps) { errors.push('auto build: no result for the empty build'); return; }
+  if (!(await realClick(app, $('[data-testid="auto-build-open"]'), errors, 'Auto build button'))) return;
+  const dialog = await waitFor(() => $('[data-testid="auto-build-dialog"]'), 2000);
+  if (!dialog) { errors.push('auto build: a real click on the button did not open the dialog'); return; }
+  if (AS.activeConfig(store.get().autoBuildLibrary).id !== AS.YOUR_CONFIG_ID) errors.push('auto build: "Your Config" is not the active config at first');
+  if (!AS.effectiveSettings(store.get().autoBuildLibrary).costControlEnabled) errors.push('auto build: "Your Config" does not start with Cost Control on');
+  checks.autoBuildFocusOnOpen = await waitFor(() => (testIdOfFocus() === 'auto-build-run' ? 'auto-build-run' : null), 1500) ?? testIdOfFocus();
+  if (checks.autoBuildFocusOnOpen !== 'auto-build-run') errors.push(`auto build: the dialog opened with focus on ${checks.autoBuildFocusOnOpen}, not Run`);
+  if (document.getElementById(dialog.getAttribute('aria-describedby') ?? '') == null) errors.push('auto build: the dialog\'s aria-describedby points at nothing');
+  // A short budget, as the Search tab sets it.
+  actions.updateAutoBuildSettings({ sampleSizeMultiplier: 0.2, finalRefinementEnabled: false, timeLimitSeconds: 30 });
+
+  // Blacklist Serration through the smart search, with real clicks.
+  await realClick(app, $('[data-testid="auto-build-tab-mods"]'), errors, 'Mods tab');
+  const box = await waitFor(() => $('[data-testid="auto-build-blacklist-search"]'), 2000);
+  if (!box) { errors.push('auto build: no blacklist search box'); return; }
+  checks.blacklistCount = $('[data-testid="auto-build-blacklist-count"]')?.textContent ?? null;
+  checks.blacklistChipsShown = $$('[data-testid="auto-build-blacklist-item"]').length;
+  if (checks.blacklistChipsShown > 12) errors.push(`auto build: the blacklist shows ${checks.blacklistChipsShown} chips at first (3 rows expected)`);
+  // The chip grid is one tab stop: a real Tab from its first chip leaves the grid (arrow keys move inside it).
+  const firstRemove = $('[data-testid="auto-build-blacklist-remove"]');
+  if (firstRemove) {
+    // A real click first, so the window has keyboard focus for the real key presses that follow.
+    await realClick(app, box, errors, 'blacklist search');
+    firstRemove.focus();
+    await nextFrame();
+    await uf.smokePress('Right');
+    await nextFrame();
+    const second = await waitFor(() => (document.activeElement !== firstRemove && document.activeElement?.dataset?.testid === 'auto-build-blacklist-remove' ? document.activeElement : null), 1000);
+    if (!second) errors.push(`auto build: the arrow keys do not move between blacklist chips (window focused: ${document.hasFocus()}, focus on ${document.activeElement === firstRemove ? 'the first chip' : testIdOfFocus() ?? document.activeElement?.tagName})`);
+    await uf.smokePress('Tab');
+    await nextFrame();
+    checks.blacklistTabLeavesGrid = !document.activeElement?.closest?.('[data-testid="auto-build-blacklist-item"]');
+    if (!checks.blacklistTabLeavesGrid) errors.push('auto build: Tab moves from chip to chip in the blacklist (it should leave the list)');
+  }
+  await checkDialogLayout(dialog, 'autoBuildMods', errors, checks);
+  await realClick(app, box, errors, 'blacklist search');
+  typeInto(box, 'serration');
+  const add = await waitFor(() => $('[data-testid="auto-build-blacklist-add"][data-name="Serration"]'), 2000);
+  if (!add) { errors.push('auto build: searching "serration" offers no Serration card'); return; }
+  await realClick(app, add, errors, 'add Serration');
+  if (!(await waitFor(() => AS.effectiveSettings(store.get().autoBuildLibrary).modBlacklist.includes('Serration'), 2000))) errors.push('auto build: Serration is not in the blacklist after the click');
+  if (!(await waitFor(() => document.activeElement === box, 1500))) errors.push(`auto build: after adding from the search focus is on ${testIdOfFocus()}, not the search box`);
+  if (!(await waitFor(() => $('[data-testid="auto-build-blacklist-listed"][data-name="Serration"]'), 1500))) errors.push('auto build: the search does not say Serration is already in the blacklist');
+  typeInto(box, '');
+  const chip = await waitFor(() => $('[data-testid="auto-build-blacklist-item"][data-name="Serration"]'), 2000);
+  if (!chip) errors.push('auto build: the blacklist shows no Serration card');
+  else if (store.get().cards?.available && !(await waitFor(() => chip.querySelector('img'), 2000))) errors.push('auto build: the Serration chip has no card image');
+  await capture(uf, 'auto-build-blacklist', errors);
+  // Delete on a chip removes it and moves focus to the next chip.
+  if (chip) {
+    const next = chip.nextElementSibling?.dataset?.name;
+    chip.querySelector('[data-testid="auto-build-blacklist-remove"]')?.focus();
+    await uf.smokePress('Delete');
+    if (!(await waitFor(() => !AS.effectiveSettings(store.get().autoBuildLibrary).modBlacklist.includes('Serration'), 2000))) errors.push('auto build: Delete on the Serration chip did not remove it');
+    const moved = await waitFor(() => document.activeElement?.closest?.('[data-testid="auto-build-blacklist-item"]')?.dataset?.name, 1500);
+    checks.focusAfterChipDelete = moved ?? testIdOfFocus();
+    if (!moved || (next && moved !== next)) errors.push(`auto build: after deleting a chip focus is on ${checks.focusAfterChipDelete}, not the next chip (${next})`);
+    actions.updateAutoBuildSettings({ modBlacklist: [...AS.effectiveSettings(store.get().autoBuildLibrary).modBlacklist, 'Serration'] });
+  }
+
+  // Run: focus moves to Cancel while it runs, then to Apply.
+  const started = performance.now();
+  let cancelFocused = false;
+  await realClick(app, $('[data-testid="auto-build-run"]'), errors, 'Run');
+  if (!(await waitFor(() => store.get().autoBuild, 2000))) { errors.push('auto build: Run did not start a run'); return; }
+  const end = await waitFor(() => {
+    if (testIdOfFocus() === 'auto-build-cancel') cancelFocused = true;
+    return ['done', 'error', 'cancelled'].includes(store.get().autoBuild?.status) ? store.get().autoBuild : null;
+  }, 60000);
+  if (end?.status !== 'done') { errors.push(`auto build: the run ended as ${end?.status ?? 'nothing'}${end?.error ? `: ${end.error}` : ''}`); return; }
+  if (!cancelFocused) errors.push('auto build: focus never moved to Cancel while the run went on');
+  const r = end.result;
+  checks.autoBuild = {
+    ms: Math.round(performance.now() - started), runs: r.runs, cores: r.cores, stoppedEarly: r.stoppedEarly,
+    dps: `${Math.round(r.before)} -> ${Math.round(r.after)}`, mods: r.mods.filter(Boolean).map(m => m.name).join(', '), arcane: r.arcanes?.[0]?.name ?? null,
+    forma: r.formaPlan?.length ?? 0,
+  };
+  checks.autoBuildFocusOnResult = await waitFor(() => (testIdOfFocus() === 'auto-build-apply' ? 'auto-build-apply' : null), 1500) ?? testIdOfFocus();
+  if (checks.autoBuildFocusOnResult !== 'auto-build-apply') errors.push(`auto build: the result left focus on ${checks.autoBuildFocusOnResult}, not Apply`);
+  if (r.mods.some(m => m?.name === 'Serration')) errors.push('auto build: the result holds the blacklisted Serration');
+  if (r.mods.slice(0, 8).filter(Boolean).length < 8) errors.push(`auto build: only ${r.mods.slice(0, 8).filter(Boolean).length} of 8 slots were filled`);
+  if (!(r.after > r.before * 3)) errors.push(`auto build: the result is not much better than the empty build (${r.before} -> ${r.after})`);
+  if (Math.abs(r.before - emptyDps) > emptyDps * 1e-6) errors.push(`auto build: its "before" DPS ${r.before} is not the Readout's ${emptyDps}`);
+  if ($('[data-testid="auto-build-capacity"]')) errors.push('auto build: with Cost Control on, the result is still over capacity');
+  if (r.formaPlan?.length && !$('[data-testid="auto-build-forma"]')) errors.push('auto build: the result needs Forma but does not list them');
+  if ($('[data-testid="auto-build-tabs"]') || $('[data-testid="auto-build-config"]')) errors.push('auto build: the settings stay editable under a result');
+  const changes = await waitFor(() => $$('[data-testid="auto-build-change"]').length && $$('[data-testid="auto-build-change"]'), 2000);
+  if (!changes) errors.push('auto build: the result shows no changes');
+  else if (changes.some(c => c.dataset.name === 'Serration')) errors.push('auto build: the result view lists Serration');
+  else if (store.get().cards?.available && !changes.some(c => c.querySelector('img'))) errors.push('auto build: the result shows no card images');
+  await checkDialogLayout(dialog, 'autoBuildResult', errors, checks);
+  await capture(uf, 'auto-build-result', errors);
+
+  // Apply: one undo step, Forma included; the Readout then shows the result's DPS and the build fits.
+  await realClick(app, $('[data-testid="auto-build-apply"]'), errors, 'Apply');
+  if (!(await waitFor(() => !store.get().autoBuildOpen, 2000))) errors.push('auto build: Apply did not close the dialog');
+  if (JSON.stringify(store.get().build.mods) !== JSON.stringify(r.mods)) errors.push('auto build: Apply did not put the proposed mods in the build');
+  if ((store.get().build.arcanes?.[0]?.name ?? null) !== (r.arcanes?.[0]?.name ?? null)) errors.push('auto build: Apply did not put the proposed arcane in the build');
+  const cap = buildCapacity(store.get().ctx, store.get().build);
+  checks.autoBuildCapacity = cap ? `${cap.used} / ${cap.capacity}` : null;
+  if (cap && cap.over > 0) errors.push(`auto build: the applied build is ${cap.over} over capacity`);
+  const applied = await settled();
+  checks.autoBuildApplied = applied ? Math.round(applied) : null;
+  if (!applied || Math.abs(applied - r.after) > r.after * 1e-3) errors.push(`auto build: the Readout shows ${applied} DPS, the result said ${r.after}`);
+  if (!(await waitFor(() => $$('[data-testid="toast"]').some(t => /Auto build applied/.test(t.textContent)), 2000))) errors.push('auto build: no "Auto build applied" toast');
+  // On the now complete build, every slot is kept: Run is disabled and says why.
+  actions.setAutoBuildOpen(true);
+  const full = await waitFor(() => $('[data-testid="auto-build-run"]'), 2000);
+  checks.autoBuildRunOnFullBuild = full?.getAttribute('aria-disabled') ?? null;
+  if (full?.getAttribute('aria-disabled') !== 'true') errors.push('auto build: Run is enabled on a complete build with every slot kept');
+  if (!/nothing to fill/i.test($('[data-testid="auto-build-keep-text"]')?.textContent ?? '')) errors.push('auto build: the Keep text does not say there is nothing to fill');
+  actions.setAutoBuildOpen(false);
+  await waitFor(() => !$('[data-testid="auto-build-dialog"]'), 2000);
+  // A real Ctrl+Z undoes the whole auto build at once, Forma included.
+  document.activeElement?.blur?.();
+  await uf.smokePress('z', ['control']);
+  if (!(await waitFor(() => emptyBuild() === empty && !store.get().build.arcanes?.[0], 2000))) errors.push('auto build: Ctrl+Z did not restore the empty build (mods and polarities)');
+  const back = await settled();
+  if (back !== emptyDps) errors.push(`auto build: after undo the DPS is ${back}, not ${emptyDps}`);
+  clearToasts();
+
+  // Cancel a long run (the Default config: the site's full settings); focus returns to Run.
+  await realClick(app, $('[data-testid="auto-build-open"]'), errors, 'Auto build button (again)');
+  await waitFor(() => $('[data-testid="auto-build-dialog"]'), 2000);
+  actions.selectAutoBuildConfig(AS.DEFAULT_CONFIG_ID);
+  await realClick(app, await waitFor(() => $('[data-testid="auto-build-run"]'), 2000), errors, 'Run (Default)');
+  await waitFor(() => (store.get().autoBuild?.runs ?? 0) > 50, 15000);
+  const cancelAt = performance.now();
+  await realClick(app, $('[data-testid="auto-build-cancel"]'), errors, 'Cancel');
+  const cancelled = await waitFor(() => store.get().autoBuild?.status === 'cancelled', 5000);
+  checks.autoBuildCancelMs = Math.round(performance.now() - cancelAt);
+  if (!cancelled) errors.push(`auto build: Cancel did not stop the run (status ${store.get().autoBuild?.status})`);
+  if (emptyBuild() !== empty) errors.push('auto build: a cancelled run changed the build');
+  if (!(await waitFor(() => $('[data-testid="auto-build-cancelled"]'), 1500))) errors.push('auto build: the dialog does not say the run was cancelled');
+  checks.autoBuildFocusAfterCancel = await waitFor(() => (testIdOfFocus() === 'auto-build-run' ? 'auto-build-run' : null), 1500) ?? testIdOfFocus();
+  if (checks.autoBuildFocusAfterCancel !== 'auto-build-run') errors.push(`auto build: after Cancel focus is on ${checks.autoBuildFocusAfterCancel}, not Run`);
+  actions.selectAutoBuildConfig(AS.YOUR_CONFIG_ID);
+  await realClick(app, $('[data-testid="auto-build-close"]'), errors, 'Close auto build');
+  await waitFor(() => !$('[data-testid="auto-build-dialog"]'), 2000);
+  await nextFrame();
+  await nextFrame();
+  if (document.activeElement?.dataset?.testid !== 'auto-build-open') errors.push(`auto build: closing the dialog left focus on ${focusId()}, not the button`);
+  actions.discardAutoBuild();
+  await settled();
+  log(`auto build: ${checks.autoBuild.dps} DPS in ${checks.autoBuild.ms} ms (${checks.autoBuild.runs} runs, ${checks.autoBuild.cores} engines, ${checks.autoBuild.forma} Forma), cancel took ${checks.autoBuildCancelMs} ms`);
+}
+
 /**
  * Screenshot import: the review on a recorded OCR result (text from the test fixtures, no image), applied as a
  * new build; then, when UF_SMOKE_OCR_IMAGE names a real screenshot, the whole Windows OCR path on it.
@@ -636,6 +944,8 @@ async function checkSaveRemove(app, errors, checks) {
   const item = await waitFor(() => $(`[data-testid="library-item"][aria-current="true"]`));
   if (!item) errors.push('save: the library does not show the saved build as current');
   actions.setLibraryOpen(false);
+  // Narrow windows show the library as an overlay drawer (a dialog): let it finish closing before the delete check.
+  await waitFor(() => !$('.fui-OverlayDrawer'), 2000);
   if (app.isDirty()) errors.push('save: build still marked as changed');
   log(`saved build ${saved.id}`);
   await capture(uf, 'saved', errors);
@@ -643,7 +953,8 @@ async function checkSaveRemove(app, errors, checks) {
   await actions.deleteSaved(saved.id);
   if ((await uf.builds.list()).some(b => b.id === saved.id)) errors.push('remove: build is still stored after delete');
   if (store.get().savedBuilds.some(b => b.id === saved.id)) errors.push('remove: build is still in the library');
-  if ($('[role="alertdialog"], [role="dialog"]')) errors.push('remove: a confirm dialog opened (delete must use undo)');
+  const openDialog = $('[role="alertdialog"], [role="dialog"]');
+  if (openDialog) errors.push(`remove: a dialog is open after delete (delete must use undo): ${describe(openDialog)} "${openDialog.textContent.trim().slice(0, 60)}"`);
   const undo = await waitFor(() => $$('[data-testid="toast"] a, [data-testid="toast"] button').find(b => b.textContent.trim() === 'Undo'));
   if (!undo) errors.push('remove: no Undo action on the delete toast');
   else {
@@ -756,6 +1067,8 @@ export async function runSmoke(app, { t0 }) {
     await checkArcane(app, errors, checks);
     await checkKeyboard(app, errors, checks);
     await checkCompare(app, errors, checks);
+    await checkBuffs(app, errors, checks);
+    await checkAutoBuild(app, errors, checks);
     await checkSaveRemove(app, errors, checks);
     await checkOcr(app, errors, checks);
     await checkFeatured(app, errors, checks);

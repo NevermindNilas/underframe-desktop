@@ -32,6 +32,23 @@ function cleanArcane(a) {
   return out;
 }
 
+/** An external buff row in underframe.site's shape: { id, name, value, element?, factionValue?, sourceBuild? }. */
+export function cleanExternalBuff(b) {
+  if (!isObj(b) || typeof b.id !== 'string' || !b.id || !Number.isFinite(Number(b.value))) return null;
+  const out = { id: str(b.id, 80), name: str(b.name, MAX_NAME) || str(b.id, 80), value: Number(b.value) };
+  if (typeof b.element === 'string' && b.element) out.element = str(b.element, 40);
+  if (Number.isFinite(Number(b.factionValue)) && b.factionValue !== null && b.factionValue !== '') out.factionValue = Number(b.factionValue);
+  if (typeof b.sourceBuild === 'string' && b.sourceBuild) out.sourceBuild = str(b.sourceBuild, MAX_NAME);
+  return out;
+}
+
+/** A status on the target before the fight: { type, stacks } with whole stacks of at least 1. */
+export function cleanExternalStatus(s) {
+  if (!isObj(s) || typeof s.type !== 'string' || !s.type) return null;
+  const stacks = Math.round(num(s.stacks));
+  return stacks >= 1 ? { type: str(s.type, 40), stacks: Math.min(99, stacks) } : null;
+}
+
 const POLARITY_CODE = /^AP_[A-Z]{2,12}$/;
 
 function cleanEnemy(e) {
@@ -75,6 +92,11 @@ export function normalizeBuild(build) {
       ? { slotPolarities: Array.from({ length: MOD_SLOTS }, (_, i) => (typeof build.slotPolarities[i] === 'string' && POLARITY_CODE.test(build.slotPolarities[i]) ? build.slotPolarities[i] : null)) }
       : {}),
     ...(typeof build.catalyst === 'boolean' ? { catalyst: build.catalyst } : {}),
+    // External buffs and target statuses (docs/port-external-buffs.md); older builds have neither.
+    ...(Array.isArray(build.externalBuffs) && build.externalBuffs.length
+      ? { externalBuffs: build.externalBuffs.slice(0, 200).map(cleanExternalBuff).filter(Boolean) } : {}),
+    ...(Array.isArray(build.externalStatuses) && build.externalStatuses.length
+      ? { externalStatuses: build.externalStatuses.slice(0, 30).map(cleanExternalStatus).filter(Boolean) } : {}),
     enemy: cleanEnemy(build.enemy),
 
     simTime: num(build.simTime, 20),

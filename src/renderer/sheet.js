@@ -34,7 +34,8 @@ export const ELEMENT_TOKEN = {
 /** The weapon's own fire mode stats: no mods, no arcanes, same mode and target faction. */
 export function baseModeOf(ctx, build) {
   try {
-    return buildStats(ctx, { ...build, arcanes: [] }, emptySlots())?.mode ?? null;
+    // The weapon's own stats: no mods, no arcanes, no external buffs.
+    return buildStats(ctx, { ...build, arcanes: [], externalBuffs: [] }, emptySlots())?.mode ?? null;
   } catch {
     return null;
   }

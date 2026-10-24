@@ -364,13 +364,31 @@ export function resolveArcanes(arcanes, weapon, data) {
   return { entries, engineNames, headshotBonus, startingStacks, notes };
 }
 
-const meetsRequirement = (entry, finalDamageTypes) => !entry.requires || (finalDamageTypes?.[entry.requires] ?? 0) > 0;
+/**
+ * Arcanes whose element need a status already on the target meets as well (external statuses). underframe.site
+ * counts a Cold status for Primary Frostbite only.
+ */
+const STATUS_MEETS_REQUIREMENT = Object.freeze({ 'Primary Frostbite': 'Cold' });
 
-/** Additive stat bonuses (stats.js modifier buckets) for a fire mode with these final damage types. */
-export function arcaneModifiersFor(resolved, finalDamageTypes) {
+/**
+ * Whether an element-gated arcane builds stacks: its element is among the fire mode's final damage types, or (Primary
+ * Frostbite) the target starts with that status (`externalStatuses`: [{ type, stacks }]).
+ */
+export function arcaneRequirementMet(name, finalDamageTypes, externalStatuses = null) {
+  const need = ARCANE_ELEMENT_REQUIREMENTS[name];
+  if (!need) return true;
+  if ((finalDamageTypes?.[need] ?? 0) > 0) return true;
+  const status = STATUS_MEETS_REQUIREMENT[name];
+  return Boolean(status && (externalStatuses ?? []).some(s => s?.type === status && Number(s.stacks) > 0));
+}
+
+const meetsRequirement = (entry, finalDamageTypes, externalStatuses) => !entry.requires || arcaneRequirementMet(entry.name, finalDamageTypes, externalStatuses);
+
+/** Additive stat bonuses (stats.js modifier buckets) for a fire mode with these final damage types (and target statuses). */
+export function arcaneModifiersFor(resolved, finalDamageTypes, externalStatuses = null) {
   const out = {};
   for (const e of resolved?.entries ?? []) {
-    if (!meetsRequirement(e, finalDamageTypes)) continue;
+    if (!meetsRequirement(e, finalDamageTypes, externalStatuses)) continue;
     for (const [k, v] of Object.entries(e.stats)) out[k] = (out[k] ?? 0) + v;
   }
   return out;
@@ -380,12 +398,12 @@ export function arcaneModifiersFor(resolved, finalDamageTypes) {
  * The engine's conditionalStats for a fire mode, holding only non-default fields, or null when there are none.
  * Stat buckets go in too (as underframe.site sends them): `damage` scales DoT ticks.
  */
-export function arcaneConditionalStats(resolved, finalDamageTypes) {
+export function arcaneConditionalStats(resolved, finalDamageTypes, externalStatuses = null) {
   const cs = {};
-  const stats = arcaneModifiersFor(resolved, finalDamageTypes);
+  const stats = arcaneModifiersFor(resolved, finalDamageTypes, externalStatuses);
   for (const [k, v] of Object.entries(stats)) if (v) cs[CONDITIONAL_STAT_NAMES[k]] = v;
   for (const e of resolved?.entries ?? []) {
-    if (!meetsRequirement(e, finalDamageTypes)) continue;
+    if (!meetsRequirement(e, finalDamageTypes, externalStatuses)) continue;
     for (const [k, v] of Object.entries(e.fields)) cs[k] = k === 'overguardDamageMultiplier' ? Math.max(cs[k] ?? 1, v) : (cs[k] ?? 0) + v;
   }
   if (resolved?.headshotBonus) cs.externalHeadshotMultiplierBonus = resolved.headshotBonus;
@@ -397,10 +415,10 @@ export function arcaneConditionalStats(resolved, finalDamageTypes) {
  * cannot build because the fire mode deals none of their element.
  * @returns {Array<{ name, level: 'none'|'partial'|'inactive', text }>}
  */
-export function arcaneNotes(resolved, finalDamageTypes) {
+export function arcaneNotes(resolved, finalDamageTypes, externalStatuses = null) {
   const out = [...(resolved?.notes ?? [])];
   for (const e of resolved?.entries ?? []) {
-    if (!meetsRequirement(e, finalDamageTypes)) out.push({ name: e.name, level: 'inactive', text: `Needs ${e.requires} damage to build stacks; this fire mode has none, so it adds nothing.` });
+    if (!meetsRequirement(e, finalDamageTypes, externalStatuses)) out.push({ name: e.name, level: 'inactive', text: `Needs ${e.requires} damage to build stacks; this fire mode has none, so it adds nothing.` });
   }
   return out;
 }

@@ -73,8 +73,12 @@ export function createEngineClient(url = '/renderer/engine.worker.js', { onResta
     init: () => request({ type: 'init' }).then(() => undefined),
     /** Cache the large app-state document under an integer id. */
     cacheAppState: (ref, appState) => request({ type: 'cacheAppState', ref, appState }).then(() => undefined),
+    /** Forget a cached app-state document (no run will name `ref` again). */
+    releaseAppState: ref => request({ type: 'releaseAppState', ref }).then(() => undefined),
     /** Run once per seed. Resolves to one engine result per seed; failed runs are {error}. */
     simulate: (input, seeds) => request({ type: 'simulate', input, seeds }).then(r => r.results),
+    /** Auto Build: run once per seed and add up one metric. Resolves to { sum, count, errors, error }. */
+    score: (input, seeds, metric) => request({ type: 'score', input, seeds, metric }).then(({ sum, count, errors, error }) => ({ sum, count, errors, error })),
     terminate: () => {
       fatal = new Error('Engine stopped.');
       for (const p of pending.values()) p.reject(fatal);

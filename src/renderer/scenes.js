@@ -11,6 +11,7 @@ import { waitFor } from './smoke.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const $ = sel => document.querySelector(sel);
+const $$ = sel => [...document.querySelectorAll(sel)];
 const log = msg => console.info(`[scenes] ${msg}`);
 
 /** A Braton Prime build with an arcane and Forma: matched and mismatched polarities, under capacity. */
@@ -189,6 +190,96 @@ export async function runScenes(app) {
     await shot(tag('08-capacity-menu'), { wait: 500, expect: '[data-testid="catalyst-menu"]' });
     escape();
     await sleep(200);
+
+    // 35. External buffs (docs/port-external-buffs.md): the quiet Buffs link at rest, the dialog empty, with the
+    // site screenshot's list, its presets menu and its statuses; then the Readout's summary line.
+    {
+      const ctx = store.get().ctx;
+      actions.clearExternal();
+      await actions.runNow();
+      await settle();
+      blur();
+      await shot(tag('35-buffs-entry-rest'), { wait: 500, expect: '[data-testid="buffs-open"]' });
+      actions.setBuffsOpen(true);
+      await shot(tag('35b-buffs-dialog-empty'), { wait: 700, expect: '[data-testid="buffs-dialog"]' });
+      const { buffFromInput } = await import('../shared/external-buffs.js');
+      for (const [id, value, element] of [['resupply', 60, 'Electricity'], ['ext_fire_rate', 60], ['ext_elemental', 298, 'Electricity'], ['ext_combining_element', 240, 'Electricity'], ['ext_flat_crit_damage', 1.2]]) {
+        actions.addExternalBuff(buffFromInput(ctx.data, id, { value, element }).row);
+      }
+      await actions.runNow();
+      await settle();
+      const content = () => $('[data-testid="buffs-dialog"] .fui-DialogContent');
+      const scrollTo = sel => {
+        const c = content();
+        const el = $(sel);
+        if (c && el) c.scrollTop += el.getBoundingClientRect().top - c.getBoundingClientRect().top - 8;
+      };
+      scrollTo('#buff-list-heading');
+      blur();
+      await shot(tag('35c-buffs-dialog-list'), { wait: 600, expect: () => document.querySelectorAll('[data-testid="buff-row"]').length === 5 });
+      await actions.saveBuffPreset('Screenshot set');
+      const screenshotSet = store.get().build.externalBuffs;
+      actions.setExternalBuffs([buffFromInput(ctx.data, 'roar', { value: 50 }).row, buffFromInput(ctx.data, 'eclipse', { value: 200 }).row]);
+      await actions.saveBuffPreset('Roar and Eclipse');
+      actions.setExternalBuffs(screenshotSet);
+      await actions.runNow();
+      await settle();
+      if (content()) content().scrollTop = 0;
+      $('[data-testid="preset-select"]')?.click();
+      await shot(tag('35d-buffs-presets-menu'), { wait: 600, expect: '[role="listbox"]' });
+      $('[data-testid="preset-select"]')?.click();
+      await waitFor(() => !$('[role="listbox"]'), 2000);
+      await sleep(200);
+      actions.addExternalStatus('Viral', 10);
+      actions.addExternalStatus('Cold', 10);
+      await actions.runNow();
+      await settle();
+      scrollTo('#status-heading');
+      blur();
+      await shot(tag('35e-buffs-statuses'), { wait: 600, expect: () => document.querySelectorAll('[data-testid="status-row"]').length === 2 });
+      // Sonar is a multiplier: it reads "×5", its field says so, and a value under 100% warns.
+      {
+        if (content()) content().scrollTop = 0;
+        const combo = $('[data-testid="buff-type"]');
+        combo?.click();
+        typeInto(combo, 'Sonar');
+        const option = await waitFor(() => $('[role="option"][data-key="type:sonar"]'), 2000);
+        option?.click();
+        const value = await waitFor(() => $('[data-testid="buff-value"]'), 2000);
+        if (value) typeInto(value, '10');
+        blur();
+        await shot(tag('35h-buffs-sonar-warning'), { wait: 600, expect: '[data-testid="buff-warning"]' });
+      }
+      // Remove all, with its inline Undo.
+      $('[data-testid="buffs-clear"]')?.click();
+      await waitFor(() => $('[data-testid="buffs-undo-clear"]'), 2000);
+      blur();
+      await shot(tag('35i-buffs-removed-undo'), { wait: 600, expect: '[data-testid="buffs-undo-clear"]' });
+      $('[data-testid="buffs-undo-clear"]')?.click();
+      await waitFor(() => store.get().build.externalBuffs?.length === 5, 2000);
+      await actions.runNow();
+      await settle();
+      if (all) {
+        // A source: Roar from a Warframe, with its Ability Strength input and what it adds.
+        if (content()) content().scrollTop = 0;
+        const combo = $('[data-testid="buff-type"]');
+        combo?.click();
+        typeInto(combo, 'Roar');
+        const option = await waitFor(() => $('[role="option"][data-key="ability:Roar"]'), 2000);
+        option?.click();
+        const strength = await waitFor(() => $('[data-testid="source-strength"]'), 2000);
+        if (strength) typeInto(strength, '250');
+        blur();
+        await shot('35f-buffs-source-roar', { wait: 600, expect: () => /Adds Roar \+125%/.test($('[data-testid="source-preview"]')?.textContent ?? '') });
+      }
+      actions.setBuffsOpen(false);
+      await sleep(300);
+      blur();
+      await shot(tag('35g-buffs-summary-rest'), { wait: 600, expect: '[data-testid="buffs-summary"]' });
+      actions.clearExternal();
+      await actions.runNow();
+      await settle();
+    }
 
     if (size === 'wide') {
       // The builds pane inline (it starts closed).
@@ -438,6 +529,122 @@ export async function runScenes(app) {
       await shot('33-card-keyboard-focus', { wait: 500, expect: () => !$('[data-testid="mod-flyout"]') });
       focusCard?.blur();
       resetPicker();
+    }
+
+    if (size !== 'wide') {
+      // 36. Auto build (docs/port-auto-build.md): the quiet entry at rest, the dialog's Run tab with what to keep, the
+      // search settings, the element lists, the blacklist editor with a search, the read-only Default, a run in
+      // progress, a result, and the applied build with its Undo toast.
+      const openTab = name => $(`[data-testid="auto-build-tab-${name.toLowerCase()}"]`)?.click();
+      const dialogContent = () => $('[data-testid="auto-build-dialog"] .fui-DialogContent');
+      await actions.newBuild({ force: true });
+      actions.setWeapon('Braton Prime');
+      equipFullBuild(actions);
+      await actions.runNow();
+      await settle();
+      blur();
+      await shot(tag('36-auto-build-entry-rest'), { wait: 500, expect: '[data-testid="auto-build-open"]' });
+      actions.setAutoBuildOpen(true);
+      blur();
+      await shot(tag('36b-auto-build-run-tab'), { wait: 700, expect: () => $('[data-testid="auto-build-summary"]') && $$('[data-testid="auto-build-keep"]').length === 8 });
+      openTab('Search');
+      blur();
+      await shot(tag('36c-auto-build-search'), { wait: 600, expect: '[data-testid="auto-build-multiplier"]' });
+      actions.updateAutoBuildSettings({
+        specificElementalCandidatesEnabled: true, specificElementalTargets: ['Viral', 'Viral Heat', 'Corrosive'],
+        elementalBlacklistEnabled: true, elementalBlacklist: ['Heat Toxin', 'Corrosive Blast'],
+      });
+      openTab('Elements');
+      blur();
+      await shot(tag('36d-auto-build-elements'), { wait: 600, expect: '[data-testid="auto-build-element-list"]' });
+      actions.updateAutoBuildSettings({ specificElementalCandidatesEnabled: false, elementalBlacklistEnabled: false });
+      openTab('Mods');
+      const box = await waitFor(() => $('[data-testid="auto-build-blacklist-search"]'), 2000);
+      if (box) typeInto(box, 'serration');
+      await waitFor(() => document.querySelectorAll('[data-testid="auto-build-blacklist-add"] img').length > 1, 3000);
+      blur();
+      await shot(tag('36e-auto-build-blacklist-search'), { wait: 700, expect: '[data-testid="auto-build-blacklist-add"][data-name="Serration"]' });
+      if (box) typeInto(box, '');
+      if (dialogContent()) dialogContent().scrollTop = 0;
+      await waitFor(() => document.querySelectorAll('[data-testid="auto-build-blacklist-item"] img').length > 3, 3000);
+      blur();
+      // At rest the blacklist lists the entries for this weapon type, three rows at a time.
+      await shot(tag('36f-auto-build-blacklist'), { wait: 700, expect: () => $$('[data-testid="auto-build-blacklist-item"]').length >= 3 && $('[data-testid="auto-build-blacklist-others"]') });
+      if (all) {
+        $('[data-testid="auto-build-blacklist-others"]')?.click();
+        $('[data-testid="auto-build-blacklist-all"]')?.click();
+        await sleep(300);
+        blur();
+        await shot('36f2-auto-build-blacklist-all', { wait: 900, expect: () => $$('[data-testid="auto-build-blacklist-item"]').length > 100 });
+        $('[data-testid="auto-build-blacklist-all"]')?.click();
+        $('[data-testid="auto-build-blacklist-others"]')?.click();
+      }
+      if (all) {
+        actions.selectAutoBuildConfig('default');
+        openTab('Search');
+        blur();
+        await shot('36g-auto-build-default-locked', { wait: 600, expect: '[data-testid="auto-build-locked"]' });
+        actions.selectAutoBuildConfig('your_config');
+      }
+      // Every slot kept on the full build: nothing to fill, so Run is disabled and says why.
+      openTab('Run');
+      blur();
+      await shot(tag('36k-auto-build-nothing-to-fill'), { wait: 600, expect: () => $('[data-testid="auto-build-run"]')?.getAttribute('aria-disabled') === 'true' });
+      $('[data-testid="auto-build-replace-all"]')?.click();
+      blur();
+      await shot(tag('36l-auto-build-replace-all'), { wait: 600, expect: () => $$('[data-testid="auto-build-keep"]').every(b => b.getAttribute('aria-pressed') === 'false') });
+      actions.setAutoBuildOpen(false);
+      await sleep(300);
+
+      // A run in progress (the site's full settings on an empty build), captured early and then cancelled.
+      await actions.newBuild({ force: true });
+      actions.closePicker({ focus: false });
+      await actions.runNow();
+      await settle();
+      actions.setAutoBuildOpen(true);
+      await sleep(300);
+      actions.startAutoBuild();
+      await waitFor(() => (store.get().autoBuild?.runs ?? 0) > 3000, 20000);
+      blur();
+      await shot(tag('36h-auto-build-running'), { wait: 200, expect: '[data-testid="auto-build-progress"]' });
+      actions.cancelAutoBuild();
+      await waitFor(() => store.get().autoBuild?.status === 'cancelled', 5000);
+
+      // A result: the smallest sample size, no refinement.
+      actions.updateAutoBuildSettings({ sampleSizeMultiplier: 0.2, finalRefinementEnabled: false });
+      actions.startAutoBuild();
+      await waitFor(() => ['done', 'error'].includes(store.get().autoBuild?.status), 60000);
+      await waitFor(() => document.querySelectorAll('[data-testid="auto-build-change"] img').length > 6, 3000);
+      blur();
+      await shot(tag('36i-auto-build-result'), { wait: 700, expect: '[data-testid="auto-build-result"]' });
+      actions.applyAutoBuild();
+      await settle();
+      blur();
+      await shot(tag('36j-auto-build-applied'), { keepToasts: true, wait: 700, expect: () => !store.get().autoBuildOpen && store.get().build.mods.some(Boolean) });
+      actions.undo();
+      clearToasts();
+      await settle();
+      if (all) {
+        // Cost Control off: the result may be over capacity, and says so above the changes (and on Apply).
+        actions.updateAutoBuildSettings({ costControlEnabled: false });
+        actions.setAutoBuildOpen(true);
+        actions.startAutoBuild();
+        await waitFor(() => ['done', 'error'].includes(store.get().autoBuild?.status), 60000);
+        blur();
+        await shot('36m-auto-build-over-capacity', { wait: 700, expect: '[data-testid="auto-build-result"]' });
+        actions.discardAutoBuild();
+        actions.setAutoBuildOpen(false);
+        // A run that finishes with the dialog closed raises a toast with Review.
+        actions.startAutoBuild();
+        await waitFor(() => ['done', 'error'].includes(store.get().autoBuild?.status), 60000);
+        blur();
+        await shot('36n-auto-build-finished-toast', { keepToasts: true, wait: 700, expect: () => $$('[data-testid="toast"]').some(t => /Auto build finished/.test(t.textContent)) });
+        actions.discardAutoBuild();
+        clearToasts();
+        actions.updateAutoBuildSettings({ costControlEnabled: true });
+      }
+      actions.updateAutoBuildSettings({ sampleSizeMultiplier: 3, finalRefinementEnabled: true });
+      await settle();
     }
 
     if (size === 'wide') {

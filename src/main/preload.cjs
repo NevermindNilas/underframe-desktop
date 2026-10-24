@@ -16,6 +16,16 @@ contextBridge.exposeInMainWorld('uf', {
     save: build => call('uf:builds:save', build),
     remove: id => call('uf:builds:remove', id),
   },
+  // External-buff presets: { version: 1, presets: [{ id, name, buffs }] }, one library per user.
+  buffPresets: {
+    get: () => call('uf:buffPresets:get'),
+    set: library => call('uf:buffPresets:set', library),
+  },
+  // Auto Build configs: { version, activeConfigId, configs: [{ id, name, settings }], cores }, or null before the first save.
+  autoBuild: {
+    get: () => call('uf:autoBuild:get'),
+    set: doc => call('uf:autoBuild:set', doc),
+  },
   openExternal: url => call('uf:openExternal', String(url)),
   /**
    * Screenshot recognition. recognize(bytes): PNG/JPEG bytes (Uint8Array or ArrayBuffer, at most 25 MB) to the

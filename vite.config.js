@@ -22,6 +22,8 @@ export default defineConfig({
   base: '/renderer/',
   publicDir: false,
   plugins: [react(), copyEngineWorker()],
+  // The Auto Build worker (src/renderer/auto-build.worker.js) is an ES module worker with its own imports.
+  worker: { format: 'es' },
   build: {
     outDir: fileURLToPath(new URL('./build/renderer', import.meta.url)),
     emptyOutDir: true,

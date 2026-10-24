@@ -8,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ORIGIN, handleAppProtocol, isAppUrl, registerAppScheme } from './protocol.js';
 import { createBuildsStore } from './builds-store.js';
+import { createBuffPresetsStore } from './buff-presets-store.js';
+import { createAutoBuildStore } from './auto-build-store.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
 import { SCENES_ARG, attachScenes, scenesDir } from './scenes.js';
@@ -38,6 +40,8 @@ let mainWindow = null;
 let smokeRun = null;
 let scenesRun = null;
 let store = null;
+let buffPresets = null;
+let autoBuild = null;
 let backdrop = 'solid';
 
 const appRoot = () => app.getAppPath();
@@ -215,6 +219,12 @@ function registerIpc() {
   handle('uf:builds:remove', async id => {
     await store.remove(String(id));
   });
+  // The external-buff preset library (one per user): get() and set(library), both resolve to the stored library.
+  handle('uf:buffPresets:get', () => buffPresets.get());
+  handle('uf:buffPresets:set', library => buffPresets.set(library));
+  // Auto Build's configs and settings (one document per user): get() resolves to it or null, set(doc) to what was stored.
+  handle('uf:autoBuild:get', () => autoBuild.get());
+  handle('uf:autoBuild:set', doc => autoBuild.set(doc));
   handle('uf:openExternal', url => openExternal(url));
   // Screenshot recognition: 'uf:ocr:recognize' and 'uf:ocr:captureGame'.
   registerOcrIpc(handle);
@@ -280,6 +290,8 @@ function start() {
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
   handleAppProtocol(protocol, appRoot());
   store = createBuildsStore(app.getPath('userData'));
+  buffPresets = createBuffPresetsStore(app.getPath('userData'));
+  autoBuild = createAutoBuildStore(app.getPath('userData'));
   registerIpc();
   Menu.setApplicationMenu(buildMenu());
   mainWindow = createWindow();

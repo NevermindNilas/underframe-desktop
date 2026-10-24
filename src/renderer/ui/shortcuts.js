@@ -69,6 +69,14 @@ export function useShortcuts() {
         actions.toggleLibrary();
         return;
       }
+      // The External buffs dialog edits the build: Ctrl+Z and Ctrl+Y reach it while it is open (outside text fields,
+      // and not while one of its confirmations is up).
+      if (ready && s.buffsOpen && ctrl && !e.altKey && !isTextField(document.activeElement)
+        && ![...document.querySelectorAll('[role="alertdialog"]')].some(isVisible)) {
+        const k = key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); actions.undoLatest(); return; }
+        if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); actions.redo(); return; }
+      }
       if (!ready || dialogOpen({ except: 'builds' })) return;
       if (key === 'Escape' && store.get().pickup) {
         e.preventDefault();
@@ -121,6 +129,9 @@ export function useShortcuts() {
       } else if (k === 'i' && !e.shiftKey) {
         e.preventDefault();
         if (!overlayPane) chooseFile();
+      } else if (k === 'a' && e.shiftKey) {
+        e.preventDefault();
+        if (!overlayPane) actions.toggleAutoBuild();
       } else if (k === 'g' && e.shiftKey) {
         e.preventDefault();
         if (!overlayPane) importFromGame();

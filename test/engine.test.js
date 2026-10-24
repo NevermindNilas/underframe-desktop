@@ -46,8 +46,9 @@ test('unmodded hit is base damage plus the Corpus puncture weakness', { skip }, 
   const ctx = await setup();
   const r = simulate(ctx, 'Braton Prime', []);
   assert.equal(r.error, undefined);
-  // 35 base (1.75 impact, 12.25 puncture, 21 slash); Corpus take +50% puncture
-  assert.equal(r.firstHitDamage, 35 + 12.25 * 0.5);
+  // 35 base (1.75 impact, 12.25 puncture, 21 slash), quantized to steps of 35/32 as the game and underframe.site do
+  // (2.1875, 12.03125, 20.78125); Corpus take +50% puncture.
+  assert.equal(r.firstHitDamage, 35 + 12.03125 * 0.5);
 });
 
 test('mods raise DPS and seeds make runs reproducible', { skip }, async () => {

@@ -1,10 +1,15 @@
 // Assemble the JSON document `calculate_dps_wasm` expects.
 import { arcaneConditionalStats } from './arcanes.js';
+import { externalConditionalStats, mergeConditionalStats, strippedArmor } from './external-buffs.js';
 
-/** The large, rarely-changing part of the input. Sent once via cache_app_state and referenced by id. */
-export function buildAppState(data, weapon) {
+/**
+ * The large, rarely-changing part of the input. Sent once via cache_app_state and referenced by id.
+ * External statuses ([{ type, stacks }]) must be here: the engine ignores a top-level copy next to appStateRef,
+ * so the caller caches one app state per weapon and status list.
+ */
+export function buildAppState(data, weapon, { externalStatuses = [] } = {}) {
   return {
-    externalStatuses: [],
+    externalStatuses: (externalStatuses ?? []).map(s => ({ type: s.type, stacks: s.stacks })),
     activeConditionals: {},
     weaponData: weapon,
     stances: data.stances ?? [],
@@ -29,14 +34,19 @@ export function buildAppState(data, weapon) {
  * @param {object} [p.appState]    required when appStateRef is null
  * @param {object|null} [p.reload] the weapon's reload_data row; without one the engine fires without reloading
  * @param {object|null} [p.arcanes] resolveArcanes() output; the same one passed to computeWeaponStats()
+ * @param {object|null} [p.external] reduceExternalBuffs().totals; the same one passed to computeWeaponStats().
+ *   Its conditionalStats join the arcanes', and External Armor Strip lowers the armor (unless
+ *   `enemy.armorStripImmune`). External statuses are not here: they live in the app state.
+ * @param {Array|null} [p.externalStatuses] the target's statuses, only to tell whether they meet an arcane's element
+ *   need (a Cold status for Primary Frostbite), the same list passed to computeWeaponStats().
  */
-export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null }) {
+export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null, external = null, externalStatuses = null }) {
   const input = {
     weaponStats,
     enemyConfig: {
       faction: enemy.faction,
       hp: enemy.hp,
-      armor: enemy.armor,
+      armor: strippedArmor(enemy.armor, external, Boolean(enemy.armorStripImmune)),
       shields: enemy.shields,
       overguard: enemy.overguard,
       headshotMultiplier: enemy.headshotMultiplier ?? 2,
@@ -75,7 +85,11 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
   if (arcanes?.startingStacks != null) input.simulationParams.secondaryEnervateStartingStacks = arcanes.startingStacks;
   // Arcane effects the engine reads from conditionalStats (DoT damage, Encumber, Sharpshot, ...), for the simulated mode.
   const mode = weaponStats.find(m => m.mode_name === modeName) ?? weaponStats[0];
-  const conditionalStats = arcanes ? arcaneConditionalStats(arcanes, mode?.finalDamageTypes) : null;
+  // External buffs' engine fields (procs, vulnerabilities, Sonar, ...) and their stat buckets (DoT damage) join them.
+  const conditionalStats = mergeConditionalStats(
+    arcanes ? arcaneConditionalStats(arcanes, mode?.finalDamageTypes, externalStatuses) : null,
+    external ? externalConditionalStats(external) : null,
+  );
   if (appStateRef != null) {
     input.appStateRef = appStateRef;
     // A top-level conditionalStats replaces the cached app state's (empty) one.

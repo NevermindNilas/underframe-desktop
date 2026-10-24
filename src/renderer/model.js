@@ -7,6 +7,7 @@ import {
   arcaneSlotCount, arcanesFor, arcaneMaxRank, defaultArcaneOptions, isArcaneCompatible, normalizeArcaneEntry, arcaneSupport,
 } from '../shared/arcanes.js';
 import { SLOT_POLARITIES, capacityOf, capacityUse, effectiveSlotPolarities, formaCount, innateSlotPolarities } from '../shared/capacity.js';
+import { buffKey, buffLine, normalizeBuffList, normalizeStatuses, statusLine } from '../shared/external-buffs.js';
 import { fmtCompact } from './format.js';
 
 export const SLOT_COUNT = 9;
@@ -166,6 +167,10 @@ export function createBuild(ctx, overrides = {}) {
     arcanes: emptyArcanes(weapon),
     slotPolarities: emptyPolarities(),
     catalyst: true,
+    // Buffs from outside the weapon and statuses already on the target (docs/port-external-buffs.md), in
+    // underframe.site's shapes: [{ id, name, value, element?, factionValue?, sourceBuild? }] and [{ type, stacks }].
+    externalBuffs: [],
+    externalStatuses: [],
     enemy: defaultEnemy(ctx),
     simTime: DEFAULT_DURATION,
     notes: '',
@@ -238,6 +243,9 @@ export function normalizeBuild(ctx, raw) {
     arcanes,
     slotPolarities: normalizePolarities(raw?.slotPolarities),
     catalyst: raw?.catalyst !== false,
+    // Unknown buff types are dropped; buffs for other weapon classes are kept (and reported as not simulated).
+    externalBuffs: normalizeBuffList(raw?.externalBuffs, ctx.data),
+    externalStatuses: normalizeStatuses(raw?.externalStatuses),
     enemy,
     simTime: DURATIONS.includes(Number(raw?.simTime)) ? Number(raw.simTime) : DEFAULT_DURATION,
     notes: String(raw?.notes ?? ''),
@@ -284,9 +292,13 @@ export function contentOf(build) {
   const arcanes = hasArcanes(build) ? build.arcanes : undefined;
   // Slot polarities and the Catalyst are left out at their defaults, for the same reason as arcanes.
   const slotPolarities = build.slotPolarities?.some(p => p != null) ? build.slotPolarities : undefined;
+  // External buffs and statuses too: left out while empty.
+  const externalBuffs = build.externalBuffs?.length ? build.externalBuffs : undefined;
+  const externalStatuses = build.externalStatuses?.length ? build.externalStatuses : undefined;
   return {
     name, weaponName, modeName, mods, ...(arcanes ? { arcanes } : {}),
     ...(slotPolarities ? { slotPolarities } : {}), ...(build.catalyst === false ? { catalyst: false } : {}),
+    ...(externalBuffs ? { externalBuffs } : {}), ...(externalStatuses ? { externalStatuses } : {}),
     enemy, simTime, notes,
   };
 }
@@ -294,8 +306,11 @@ export function contentOf(build) {
 /** Restore content (an undo step) into the working build, keeping its identity (id, save time). */
 export function withContent(build, content) {
   const { lastResult: _stale, ...identity } = build;
-  // Content without arcanes means "no arcanes", not "keep the current ones" (the same for polarities).
-  return { ...identity, arcanes: (build.arcanes ?? []).map(() => null), slotPolarities: emptyPolarities(), catalyst: true, ...content };
+  // Content without arcanes means "no arcanes", not "keep the current ones" (the same for polarities and buffs).
+  return {
+    ...identity, arcanes: (build.arcanes ?? []).map(() => null), slotPolarities: emptyPolarities(), catalyst: true,
+    externalBuffs: [], externalStatuses: [], ...content,
+  };
 }
 
 /** Whether any arcane slot of a build is filled. */
@@ -309,8 +324,14 @@ export function snapshotOf(build) {
 /** Everything the simulation result depends on. */
 export function simKeyOf(ctx, build) {
   if (!build) return '';
-  return JSON.stringify([build.weaponName, build.modeName, build.mods, resolveEnemy(ctx, build.enemy), build.simTime, hasArcanes(build) ? build.arcanes : []]);
+  return JSON.stringify([
+    build.weaponName, build.modeName, build.mods, resolveEnemy(ctx, build.enemy), build.simTime, hasArcanes(build) ? build.arcanes : [],
+    ...(build.externalBuffs?.length || build.externalStatuses?.length ? [build.externalBuffs ?? [], build.externalStatuses ?? []] : []),
+  ]);
 }
+
+/** Whether a build carries external buffs or statuses. */
+export const hasExternal = build => Boolean(build?.externalBuffs?.length || build?.externalStatuses?.length);
 
 /** Switch weapon, dropping mods and arcanes that no longer fit. */
 export function changeWeapon(ctx, build, weaponName) {
@@ -357,6 +378,22 @@ export function setSlotPolarity(ctx, build, slot, code) {
   const same = want == null || (want === 'AP_UNIVERSAL' ? innate[slot] == null : want === innate[slot]);
   next[slot] = same ? null : want;
   return next[slot] === (build.slotPolarities?.[slot] ?? null) ? build : { ...build, slotPolarities: next };
+}
+
+/**
+ * A build with an Auto build Forma plan applied: each listed slot ({ slot, to }) set to its new polarity
+ * (to: a code, or null for none). One build, so applying it with the mods is one undo step.
+ */
+export function withFormaPlan(ctx, build, plan) {
+  return (plan ?? []).reduce((b, c) => setSlotPolarity(ctx, b, c.slot, c.to ?? 'AP_UNIVERSAL'), build);
+}
+
+/** "Slot 3 → Madurai (V)" for each slot of a Forma plan. */
+export function formaPlanText(plan) {
+  return (plan ?? []).map(c => {
+    const p = polarityInfo(c.to ?? 'AP_UNIVERSAL');
+    return `${slotLabel(c.slot)} → ${c.to ? `${p.label} (${p.symbol})` : 'no polarity'}`;
+  });
 }
 
 /**
@@ -545,8 +582,9 @@ export function unappliedFeatures(tb) {
   if (tb.activeConditionals && Object.entries(tb.activeConditionals).some(([k, v]) => v && !arcaneNames.has(k))) out.push('conditionals');
   if (tb.mods?.some(m => m && /riven/i.test(m.name))) out.push('rivens');
   if (tb.incarnon && Object.values(tb.incarnon).some(Boolean)) out.push('incarnon settings');
-  for (const k of ['externalBuffs', 'externalWeaponBuffs', 'externalStatuses', 'externalAbilities', 'archon_shards']) {
-    if (tb[k]?.length) { out.push('external buffs'); break; }
+  // External buffs and statuses are applied (docs/port-external-buffs.md); a Warframe build's own buff sources are not.
+  for (const k of ['externalWeaponBuffs', 'externalAbilities', 'archon_shards']) {
+    if (tb[k]?.some(Boolean)) { out.push('Warframe buff sources'); break; }
   }
   if (tb.customFireModes?.length) out.push('custom fire modes');
   return out;
@@ -557,15 +595,24 @@ export function buildFromFeatured(ctx, featured, enemy = null) {
   const tb = featured.source;
   const { build, warnings } = normalizeBuild(ctx, {
     name: featured.name, weaponName: tb.itemName, mods: tb.mods, arcanes: featuredArcanes(ctx, tb), notes: featured.description, enemy,
+    externalBuffs: tb.externalBuffs, externalStatuses: tb.externalStatuses,
   });
   const skipped = unappliedFeatures(tb);
   const unsimulated = unsimulatedArcaneNames(ctx, build);
   const notes = [
     `Conditionals, rivens and incarnon settings from featured builds are not applied${skipped.length ? ` (this one uses ${skipped.join(', ')})` : ''}.` +
       (unsimulated.length ? ` ${unsimulated.join(', ')} ${unsimulated.length > 1 ? 'are' : 'is'} equipped but not simulated.` : ''),
+    ...(hasExternal(build) ? [`Its ${externalSummary(build)} are applied; Buffs in the Readout lists them.`] : []),
     ...warnings,
   ];
   return { build, notes };
+}
+
+/** "3 external buffs and 1 status", for messages. */
+export function externalSummary(build) {
+  const b = build?.externalBuffs?.length ?? 0;
+  const s = build?.externalStatuses?.length ?? 0;
+  return [b ? `${b} external ${b === 1 ? 'buff' : 'buffs'}` : null, s ? `${s} target ${s === 1 ? 'status' : 'statuses'}` : null].filter(Boolean).join(' and ');
 }
 
 /** Mods equipped in a build, by name, for messages ("Hornet Strike, Lethal Torrent"). */
@@ -601,6 +648,8 @@ export function simErrorText(message) {
   if (/worker crashed|unreadable message|Engine stopped/i.test(m)) return 'The damage engine stopped unexpectedly. Try again to restart it.';
   if (/Could not load the damage engine/i.test(m)) return m;
   if (/^Unknown weapon/i.test(m)) return `${m}.`;
+  // The engine cannot attribute ticks of damaging external statuses (Slash, Toxin, Heat, ...) on some targets.
+  if (/damaging external statuses/i.test(m)) return "This target can't take damaging external statuses (Slash, Toxin, Heat, Electricity, Gas) yet. Remove them under Buffs, or pick another target.";
   return m ? `The engine reported: ${m}` : 'The engine gave no reason.';
 }
 
@@ -722,7 +771,7 @@ export function weaponMatches(ctx, query = '') {
 }
 
 /** A compare-tray entry for the current result. `config` keeps what it was made from, to explain differences. */
-export function makePin(build, summary, id, mode = null) {
+export function makePin(build, summary, id, mode = null, data = null) {
   const { preset, level, steelPath, faction, headshot, hp, armor, shields, overguard } = build.enemy;
   return {
     id,
@@ -745,8 +794,27 @@ export function makePin(build, summary, id, mode = null) {
       arcanes: (build.arcanes ?? []).map(a => (a ? { name: a.name, rank: a.rank, ...(a.options ? { options: { ...a.options } } : {}) } : null)),
       enemy: { preset, level, steelPath: Boolean(steelPath), faction, headshot: Boolean(headshot), hp, armor, shields, overguard },
       simTime: build.simTime,
+      // Left out while empty, so pins made before external buffs existed compare equal.
+      ...(build.externalBuffs?.length ? { externalBuffs: build.externalBuffs.map(b => ({ ...b, text: buffLine(b, data) })) } : {}),
+      ...(build.externalStatuses?.length ? { externalStatuses: build.externalStatuses.map(s => ({ ...s })) } : {}),
     },
   };
+}
+
+/** What changed between two buff and status lists, in words ("+External Fire Rate · +60%", "−Viral ×10"). */
+function externalChanges(a, b) {
+  const out = [];
+  const line = r => r.text ?? buffLine(r, null);
+  const key = r => `${buffKey(r)}=${r.value}`;
+  const before = new Map((a?.externalBuffs ?? []).map(r => [key(r), r]));
+  const after = new Map((b?.externalBuffs ?? []).map(r => [key(r), r]));
+  for (const [k, r] of after) if (!before.has(k)) out.push(`+${line(r)}`);
+  for (const [k, r] of before) if (!after.has(k)) out.push(`−${line(r)}`);
+  const sBefore = new Map((a?.externalStatuses ?? []).map(s => [`${s.type}×${s.stacks}`, s]));
+  const sAfter = new Map((b?.externalStatuses ?? []).map(s => [`${s.type}×${s.stacks}`, s]));
+  for (const [k, s] of sAfter) if (!sBefore.has(k)) out.push(`+${statusLine(s)}`);
+  for (const [k, s] of sBefore) if (!sAfter.has(k)) out.push(`−${statusLine(s)}`);
+  return out;
 }
 
 /**
@@ -793,6 +861,7 @@ export function pinChanges(pin, baseline) {
   if (ea.faction !== eb.faction) out.push(eb.faction);
   if (Boolean(ea.headshot) !== Boolean(eb.headshot)) out.push(`Headshots ${eb.headshot ? 'on' : 'off'}`);
   if (a.simTime !== b.simTime) out.push(`${b.simTime} s`);
+  out.push(...externalChanges(a, b));
   return out;
 }
 
