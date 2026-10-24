@@ -11,8 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  MAX_IMAGE_BYTES, brightTextFilter, findCardAnchors, mapBox, measurePips, planDetailPasses, planFullPass, sniffImageType,
-  toBuffer,
+  MAX_IMAGE_BYTES, brightTextFilter, findCardAnchors, mapBox, measurePips, planDetailPasses, planFullPass, screenGeometry,
+  sniffImageType, toBuffer,
 } from './preprocess.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -144,9 +144,11 @@ async function recognizeNow(input, { timeoutMs = OCR_TIMEOUT_MS, debugDir = null
     const second = await recognise(detail);
     detail.forEach((pass, i) => lines.push(...toLines(second.images[i], pass)));
 
+    // The layout's scale: a crop's comes from its text (screenGeometry).
+    const geometry = screenGeometry(width, height, lines.filter(l => l.pass === 'full'));
     const bitmap = source.toBitmap();
-    const cards = findCardAnchors(width, height, lines.filter(l => l.pass === 'slots'))
-      .map(anchor => ({ ...anchor, pips: measurePips(bitmap, width, height, anchor) }));
+    const cards = findCardAnchors(width, height, lines.filter(l => l.pass === 'slots'), geometry)
+      .map(anchor => ({ ...anchor, pips: measurePips(bitmap, width, height, anchor, geometry) }));
 
     return {
       width,
@@ -154,6 +156,7 @@ async function recognizeNow(input, { timeoutMs = OCR_TIMEOUT_MS, debugDir = null
       language: first.language,
       lines,
       cards,
+      geometry,
       passes: [full, ...detail].map(p => ({ name: p.name, region: p.region, scale: Math.round(p.scale * 1000) / 1000 })),
       ms: { total: Date.now() - started, ocr: ocrMs },
     };

@@ -5,7 +5,8 @@
 // Layout of the upgrade screen (16:9 area, centred on ultrawide screens): the header names the weapon; the
 // equipped mods are compact cards in a 2 x 4 grid; the exilus card sits one column to the right of the grid,
 // between its rows; the arcane's name is above the exilus; the mod inventory fills the lower half under a search
-// box; the stats panel is on the left.
+// box; the stats panel is on the left. A crop of the screen (only the cards) is read too: its scale comes from the
+// size of its text (screenGeometry), and nothing is assumed about where it sat on the screen.
 
 import { isKitgun, isModCompatible, maxRank } from './mods.js';
 import { normalizePolarity, slotDrain } from './capacity.js';
@@ -127,6 +128,34 @@ export function acceptScore(key) {
 
 const GUN_MOD_TYPES = new Set(['PRIMARY', 'SECONDARY']);
 const vocabCache = new WeakMap();
+
+/** Full screenshots show UI text about a hundredth of the 16:9 UI width tall (measured: 87-128 widths per height). */
+const UI_WIDTHS_PER_TEXT_HEIGHT = 100;
+/** Below this many UI widths per text height, the image is a crop: its text is larger than its size implies. */
+const CROP_RATIO = 70;
+
+/**
+ * The scale the upgrade screen's layout fractions refer to: { ui, vh, left, cropped }, the 16:9 UI width, the screen
+ * height, the UI area's left edge (null when unknown) and whether the image is a crop. A full screenshot gives them
+ * from its size. A crop (a few cards cut out of the screen) does not: its scale comes from the median height of its
+ * words, and its position on the screen is unknown. The same as src/main/ocr/preprocess.js screenGeometry (the main
+ * process can't import this module); a test checks both agree.
+ */
+export function screenGeometry(width, height, lines = []) {
+  const ui0 = Math.min(width, Math.round((height * 16) / 9));
+  const heights = [];
+  for (const l of lines) {
+    if (!/\p{L}{3}/u.test(String(l.text ?? ''))) continue;
+    for (const w of l.words ?? []) if (/\p{L}{2}/u.test(String(w.text ?? 'ab')) && w.h > 0) heights.push(w.h);
+  }
+  heights.sort((a, b) => a - b);
+  const median = heights.length >= 4 ? heights[heights.length >> 1] : 0;
+  if (median > 0 && ui0 / median < CROP_RATIO) {
+    const ui = median * UI_WIDTHS_PER_TEXT_HEIGHT;
+    return { ui, vh: (ui * 9) / 16, left: null, cropped: true };
+  }
+  return { ui: ui0, vh: height, left: (width - ui0) / 2, cropped: false };
+}
 
 /** Normalised vocabularies for weapons, gun mods and arcanes, cached per data object. */
 export function buildVocabulary(data) {
@@ -272,8 +301,10 @@ const lineBox = line => {
  * (directly under, centred the same) joined. Each block keeps its box and its text variants (first line alone
  * and joined), because OCR sometimes splits one name and sometimes runs two cards' names together.
  */
-export function textBlocks(lines, { width, height }) {
-  const ui = Math.min(width, Math.round((height * 16) / 9));
+export function textBlocks(lines, { width, height, ui: givenUi = null, vh = null }) {
+  const ui = givenUi ?? Math.min(width, Math.round((height * 16) / 9));
+  // Tolerances follow the screen's scale (a crop's virtual height), positions stay in image pixels.
+  height = vh ?? height;
   const byPass = new Map();
   for (const line of lines) {
     if (!line.words?.length || !String(line.text ?? '').trim()) continue;
@@ -374,16 +405,19 @@ export function matchWeaponInText(text, weapons) {
  */
 export function recognizeBuild(ocr, data) {
   const width = Number(ocr?.width) || 1920;
-  const height = Number(ocr?.height) || 1080;
-  const ui = Math.min(width, Math.round((height * 16) / 9));
-  const left = (width - ui) / 2;
+  const imageHeight = Number(ocr?.height) || 1080;
   const vocab = buildVocabulary(data);
   const warnings = [];
   const lines = (ocr?.lines ?? []).filter(l => l?.words?.length);
+  // The layout's scale: `height` is the screen height the layout fractions refer to (a crop's comes from its text),
+  // `imageHeight` the image's own; `left` is null when the crop's place on the screen is unknown.
+  const geo = ocr?.geometry ?? screenGeometry(width, imageHeight, lines.filter(l => (l.pass ?? 'full') === 'full'));
+  const { ui, left, cropped } = geo;
+  const height = geo.vh;
 
   // Where the inventory starts: the search box (any pass), else nothing is excluded.
-  const searchTops = lines.filter(l => SEARCH_RE.test(String(l.text ?? ''))).map(l => lineBox(l).y).filter(y => y > height * 0.3);
-  const inventoryTop = searchTops.length ? Math.min(...searchTops) : height;
+  const searchTops = lines.filter(l => SEARCH_RE.test(String(l.text ?? ''))).map(l => lineBox(l).y).filter(y => y > imageHeight * 0.3);
+  const inventoryTop = searchTops.length ? Math.min(...searchTops) : imageHeight;
 
   // ---- weapon from the header
   const header = lines.filter(l => (l.pass === 'title' || l.pass === 'full') && lineBox(l).y < height * 0.13);
@@ -394,10 +428,12 @@ export function recognizeBuild(ocr, data) {
   }
 
   // ---- candidate cards: text blocks in the upgrade area (right of the stats panel, above the inventory)
-  const blocks = textBlocks(lines, { width, height }).filter(b => {
+  const blocks = textBlocks(lines, { width, height: imageHeight, ui, vh: height }).filter(b => {
     if (b.pass === 'title') return false;
-    if (b.box.y < height * 0.12 || b.box.y > inventoryTop - height * 0.005) return false;
-    if (b.box.cx < left + ui * 0.27) return false;
+    // The header band and the stats panel exist only on a full screenshot; a crop holds just the cards.
+    if (!cropped && b.box.y < height * 0.12) return false;
+    if (b.box.y > inventoryTop - height * 0.005) return false;
+    if (left != null && b.box.cx < left + ui * 0.27) return false;
     return b.box.w < ui * 0.16;
   });
 

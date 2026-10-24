@@ -5,10 +5,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   acceptScore, buildVocabulary, rankFromProfile, damerauLevenshtein, drainAt, inferRank, looksLikeRiven, matchWeaponInText, nameSimilarity,
-  normalizeName, rankMatches, ranksForDrain, recognizeBuild, rivenWeaponFamily, textBlocks, trigramSimilarity,
+  normalizeName, rankMatches, ranksForDrain, recognizeBuild, rivenWeaponFamily, screenGeometry, textBlocks, trigramSimilarity,
 } from '../src/shared/build-recognition.js';
 import {
   MAX_IMAGE_BYTES, brightTextFilter, findCardAnchors, mapBox, measurePips, planDetailPasses, planFullPass, sniffImageType, toBuffer,
+  screenGeometry as mainScreenGeometry,
 } from '../src/main/ocr/preprocess.js';
 import { slotDrain } from '../src/shared/capacity.js';
 import { isGameWindowTitle, pickGameSource } from '../src/main/ocr/game-window.js';
@@ -321,6 +322,25 @@ test('card anchors: one per card, wrapped names counted once, wide lines skipped
 });
 
 // ---------- recorded screenshots ----------
+
+test('crops: the layout scale comes from the text size; full screenshots keep their own; main and shared agree', () => {
+  const files = existsSync(fixtureDir) ? readdirSync(fixtureDir).filter(f => f.endsWith('.json')) : [];
+  for (const file of files) {
+    const { ocr } = JSON.parse(readFileSync(path.join(fixtureDir, file), 'utf8'));
+    const full = ocr.lines.filter(l => (l.pass ?? 'full') === 'full');
+    const geo = screenGeometry(ocr.width, ocr.height, full);
+    assert.deepEqual(mainScreenGeometry(ocr.width, ocr.height, full), geo, file);
+    assert.equal(geo.cropped, file.startsWith('crop-'), `${file}: ${JSON.stringify(geo)}`);
+  }
+  // A crop of a few cards: 25 px text in a 551 px tall image is a 2500 px wide UI; read all of it, no header pass.
+  const words = Array.from({ length: 6 }, (_, i) => ({ text: 'Galvanized', x: 100 + i * 300, y: 250, w: 130, h: 25 }));
+  const lines = words.map(w => ({ text: w.text, words: [w] }));
+  const geo = screenGeometry(1803, 551, lines);
+  assert.deepEqual(geo, { ui: 2500, vh: 1406.25, left: null, cropped: true });
+  const passes = planDetailPasses(1803, 551, lines);
+  assert.deepEqual(passes.map(p => p.name), ['slots']);
+  assert.deepEqual(passes[0].region, { x: 0, y: 0, width: 1803, height: 551 });
+});
 
 const fixtures = existsSync(fixtureDir) ? readdirSync(fixtureDir).filter(f => f.endsWith('.json')).sort() : [];
 

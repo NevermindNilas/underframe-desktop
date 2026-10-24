@@ -29,6 +29,34 @@ export function uiWidth(width, height) {
   return Math.min(width, Math.round(height * 16 / 9));
 }
 
+/** Full screenshots show UI text about a hundredth of the 16:9 UI width tall (measured: 87-128 widths per height). */
+export const UI_WIDTHS_PER_TEXT_HEIGHT = 100;
+/** Below this many UI widths per text height, the image is a crop: its text is larger than its size implies. */
+const CROP_RATIO = 70;
+
+/**
+ * The scale the upgrade screen's layout fractions refer to: { ui, vh, left, cropped }, the 16:9 UI width, the screen
+ * height, the UI area's left edge (null when unknown) and whether the image is a crop. A full screenshot gives them
+ * from its size. A crop (a few cards cut out of the screen) does not: its scale comes from the median height of
+ * its words, and its position on the screen is unknown, so `left` is null.
+ * build-recognition.js has the same function (the main process can't import src/shared); a test checks both agree.
+ */
+export function screenGeometry(width, height, lines = []) {
+  const ui0 = uiWidth(width, height);
+  const heights = [];
+  for (const l of lines) {
+    if (!/\p{L}{3}/u.test(String(l.text ?? ''))) continue;
+    for (const w of l.words ?? []) if (/\p{L}{2}/u.test(String(w.text ?? 'ab')) && w.h > 0) heights.push(w.h);
+  }
+  heights.sort((a, b) => a - b);
+  const median = heights.length >= 4 ? heights[heights.length >> 1] : 0;
+  if (median > 0 && ui0 / median < CROP_RATIO) {
+    const ui = median * UI_WIDTHS_PER_TEXT_HEIGHT;
+    return { ui, vh: (ui * 9) / 16, left: null, cropped: true };
+  }
+  return { ui: ui0, vh: height, left: (width - ui0) / 2, cropped: false };
+}
+
 /** The first OCR pass: the whole image, upscaled 2x when it is narrower than 1600 px. */
 export function planFullPass(width, height) {
   const w = Math.max(1, Math.round(width));
@@ -50,6 +78,11 @@ const SEARCH_RE = /^[^\p{L}]*\p{L}?(search|buscar|procurar|chercher|suche|cerca|
 export function planDetailPasses(width, height, fullLines = []) {
   const w = Math.max(1, Math.round(width));
   const h = Math.max(1, Math.round(height));
+  // A crop holds only cards: read all of it, sized as on a full screen of its scale, and there is no header.
+  const geo = screenGeometry(w, h, fullLines);
+  if (geo.cropped) {
+    return [{ name: 'slots', region: { x: 0, y: 0, width: w, height: h }, scale: clamp(1700 / geo.vh, 1, 3), filter: 'bright-text' }];
+  }
   const ui = uiWidth(w, h);
   const left = Math.round((w - ui) / 2);
   const search = fullLines
@@ -120,8 +153,9 @@ const NAME_LIKE = /\p{L}{3}/u;
  * Card anchors from the slots pass: one per card-name line, at the name's centre x and top y. A name that wraps
  * onto a second line counts once (its first line). Lines too wide to be a card name are skipped.
  */
-export function findCardAnchors(width, height, slotLines = []) {
-  const ui = uiWidth(width, height);
+export function findCardAnchors(width, height, slotLines = [], geo = null) {
+  const ui = geo?.ui ?? uiWidth(width, height);
+  const vh = geo?.vh ?? height;
   const boxes = slotLines
     .filter(l => l.words?.length && NAME_LIKE.test(String(l.text ?? '')))
     .map(l => {
@@ -134,7 +168,7 @@ export function findCardAnchors(width, height, slotLines = []) {
     .sort((a, b) => a.y - b.y);
   const tops = [];
   for (const b of boxes) {
-    const above = tops.find(t => Math.abs(t.x - b.x) < ui * 0.03 && b.y - t.y > 0 && b.y - t.y < height * 0.035);
+    const above = tops.find(t => Math.abs(t.x - b.x) < ui * 0.03 && b.y - t.y > 0 && b.y - t.y < vh * 0.035);
     if (!above) tops.push(b);
   }
   return tops.map(t => ({ x: Math.round(t.x), y: Math.round(t.y) }));
@@ -321,22 +355,24 @@ function pipSpacing(row, expected) {
  * With no lit pip and no bar but a centred row of grey pips it returns { lit: 0, grey, total, ... } (rank 0).
  * Null when nothing is found (the card is covered, or this is not a card).
  */
-export function measurePips(bgra, width, height, anchor) {
-  const ui = uiWidth(width, height);
+export function measurePips(bgra, width, height, anchor, geo = null) {
+  // Layout distances scale with the screen (`vh`, `ui`: a crop's come from its text); `height` bounds the bitmap.
+  const ui = geo?.ui ?? uiWidth(width, height);
+  const vh = geo?.vh ?? height;
   // Ten pips span about 0.055 of the UI width; the row sits 0.045-0.065 of the height below the name's top.
   const band = {
     x0: clamp(Math.round(anchor.x - 0.04 * ui), 0, width - 1),
-    y0: clamp(Math.round(anchor.y + 0.033 * height), 0, height - 1),
+    y0: clamp(Math.round(anchor.y + 0.033 * vh), 0, height - 1),
   };
   band.x1 = clamp(Math.round(anchor.x + 0.04 * ui), band.x0 + 1, width);
-  band.y1 = clamp(Math.round(anchor.y + 0.078 * height), band.y0 + 1, height);
+  band.y1 = clamp(Math.round(anchor.y + 0.078 * vh), band.y0 + 1, height);
   const expected = PIP_SPACING * ui;
   const round1 = v => Math.round(v * 10) / 10;
 
-  const row = pipRow(pipBlobs(bgra, width, height, band, isLit, ui, { wholeRows: true }), height);
+  const row = pipRow(pipBlobs(bgra, width, vh, band, isLit, ui, { wholeRows: true }), vh);
   const bars = litBarRows(bgra, width, band, ui);
-  const rowY = row.length ? row.reduce((a, p) => a + p.y, 0) / row.length : anchor.y + 0.055 * height;
-  const bar = bars.some(y => Math.abs(y - rowY) <= height * 0.012);
+  const rowY = row.length ? row.reduce((a, p) => a + p.y, 0) / row.length : anchor.y + 0.055 * vh;
+  const bar = bars.some(y => Math.abs(y - rowY) <= vh * 0.012);
   if (row.length) {
     const spacing = pipSpacing(row, expected);
     const first = row[0].x;
@@ -352,7 +388,7 @@ export function measurePips(bgra, width, height, anchor) {
     }).sort((a, b) => a - b);
     const center = anchor.x + residuals[Math.floor(residuals.length / 2)] * half;
     const samples = [];
-    const ry = Math.max(1, Math.round(height * 0.004));
+    const ry = Math.max(1, Math.round(vh * 0.004));
     const rx = Math.max(1, Math.round(spacing * 0.25));
     for (let j = -PROFILE_HALF_STEPS; j <= PROFILE_HALF_STEPS; j++) {
       const cx = Math.round(center + j * half);
@@ -382,7 +418,7 @@ export function measurePips(bgra, width, height, anchor) {
   if (bar) return { lit: null, detected: 0, spacing: null, y: round1(rowY), first: null, last: null, center: anchor.x, total: null, bar };
   // Rank 0: a row of evenly spaced grey pips centred under the card.
   // Grey pips are dim (about 160 of 255), so a fixed floor replaces the brightest-part rule.
-  const grey = pipRow(pipBlobs(bgra, width, height, band, isGrey, ui, { minCore: 120 }), height);
+  const grey = pipRow(pipBlobs(bgra, width, vh, band, isGrey, ui, { minCore: 120 }), vh);
   if (grey.length >= 2) {
     const spacing = pipSpacing(grey, expected);
     const evenly = grey.slice(1).every((p, i) => {
