@@ -798,6 +798,9 @@ async function checkAutoBuild(app, errors, checks) {
   if (firstRemove) {
     // A real click first, so the window has keyboard focus for the real key presses that follow.
     await realClick(app, box, errors, 'blacklist search');
+    // The click is delivered asynchronously: wait for it to land before moving focus, or it takes focus back.
+    await waitFor(() => document.activeElement === box || box.contains(document.activeElement), 1000);
+    await nextFrame();
     firstRemove.focus();
     await nextFrame();
     await uf.smokePress('Right');

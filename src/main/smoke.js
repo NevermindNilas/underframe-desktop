@@ -111,6 +111,11 @@ export function attachSmoke(win, { exit, env = process.env, timeoutMs = SMOKE_TI
    */
   async function press(key, modifiers = []) {
     if (done || win.isDestroyed()) return false;
+    // Key input only reaches a focused page: another window (the user's, on a PC in use) may have taken focus.
+    if (!win.isFocused()) {
+      win.focus();
+      wc.focus();
+    }
     const mods = (Array.isArray(modifiers) ? modifiers : []).filter(m => ['shift', 'control', 'alt'].includes(m));
     wc.sendInputEvent({ type: 'keyDown', keyCode: String(key), modifiers: mods });
     if (String(key).length === 1) wc.sendInputEvent({ type: 'char', keyCode: String(key), modifiers: mods });
