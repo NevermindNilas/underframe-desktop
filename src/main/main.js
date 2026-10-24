@@ -11,6 +11,7 @@ import { createBuildsStore } from './builds-store.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
 import { SCENES_ARG, attachScenes, scenesDir } from './scenes.js';
+import { AUTOMATION_SWITCHES, captureVia } from './capture.js';
 import { registerOcrIpc } from './ocr/ipc.js';
 import { MIN_SIZE, initialSize, themeSourceFrom, titleBarOverlay, wantsMica, windowBackground, zoomFor } from './window-chrome.js';
 
@@ -24,6 +25,8 @@ const CLOSE_ANSWER_TIMEOUT_MS = 5000;
 
 // Must happen before ready.
 registerAppScheme(protocol);
+// Automated runs keep rendering while covered or in the background (captures and timers never stall).
+if (automated) for (const [name, value] of AUTOMATION_SWITCHES) app.commandLine.appendSwitch(name, ...(value ? [value] : []));
 
 // Automated runs keep away from the user's builds and skip the single-instance lock.
 if (smoke) app.setPath('userData', path.join(os.tmpdir(), 'underframe-desktop-smoke'));
@@ -79,8 +82,11 @@ function syncChrome(win) {
 function createWindow() {
   const second = process.env.UF_SECOND_MONITOR === '1';
   const size = initialSize(process.env);
+  // Automated runs capture the page, which has no Mica behind it: they use the solid backdrop (UF_CAPTURE_SCREEN=1 keeps Mica).
+  const pageCapture = automated && captureVia() === 'page';
   backdrop = wantsMica({
-    platform: process.platform, release: os.release(), env: process.env, highContrast: nativeTheme.shouldUseHighContrastColors,
+    platform: process.platform, release: os.release(), env: pageCapture ? { ...process.env, UF_NO_MICA: '1' } : process.env,
+    highContrast: nativeTheme.shouldUseHighContrastColors,
   }) ? 'mica' : 'solid';
   const options = {
     ...size,
@@ -220,6 +226,7 @@ function registerIpc() {
   });
   handle('uf:smokeCapture', tag => (smokeRun ? smokeRun.capture(tag) : null));
   handle('uf:smokeClick', (x, y) => (smokeRun ? smokeRun.click(x, y) : false));
+  handle('uf:smokePress', (key, modifiers) => (smokeRun ? smokeRun.press(String(key), modifiers) : false));
   handle('uf:smokeOcrImage', () => (smokeRun ? smokeRun.ocrImage() : null));
 
   handle('uf:sceneCapture', name => (scenesRun ? scenesRun.capture(String(name)) : null));

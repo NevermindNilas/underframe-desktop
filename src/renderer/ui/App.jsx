@@ -1,4 +1,4 @@
-// Root: Fluent theme, window shell (title bar, library pane, workspace, status bar), global shortcuts.
+// Root: Fluent theme, the window shell (top bar, builds pane, workspace), dialogs and global shortcuts.
 import { useEffect, useMemo } from 'react';
 import { AriaLiveAnnouncer, FluentProvider, makeStyles } from '@fluentui/react-components';
 import { makeTheme, layerVariables, shellBackground } from '../theme.js';
@@ -6,14 +6,14 @@ import { useApp, useMediaQuery, useWindowSize, layoutFor } from '../hooks.js';
 import { store, isDirty } from '../controller.js';
 import { uf } from '../platform.js';
 import { buildToSave } from '../model.js';
-import { TitleBar } from './TitleBar.jsx';
+import { TopBar } from './TopBar.jsx';
 import { LibraryPane } from './LibraryPane.jsx';
 import { Workspace } from './Workspace.jsx';
-import { StatusBar } from './StatusBar.jsx';
 import { Toasts } from './Toasts.jsx';
 import { OcrDialog } from './OcrDialog.jsx';
 import { DropOverlay } from './DropOverlay.jsx';
 import { Dialogs } from './Dialogs.jsx';
+import { CompareDialog } from './CompareDialog.jsx';
 import { Announcer } from './Announcer.jsx';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import { useShortcuts } from './shortcuts.js';
@@ -25,9 +25,10 @@ const useStyles = makeStyles({
   provider: {
     backgroundColor: 'transparent',
   },
+  // One 48 px top bar, then the workspace: no toolbar row, no status bar (docs/declutter-spec.md 1).
   shell: {
     display: 'grid',
-    gridTemplateRows: '48px minmax(0, 1fr) 28px',
+    gridTemplateRows: '48px minmax(0, 1fr)',
     height: '100vh',
     overflow: 'hidden',
   },
@@ -84,7 +85,8 @@ function Shell() {
   const layout = layoutFor(width, height);
   const libraryOpenPref = useApp(s => s.ui.libraryOpen);
   const overlayOpen = useApp(s => s.overlayLibraryOpen ?? false);
-  const libraryOpen = layout.library === 'inline' ? libraryOpenPref ?? true : overlayOpen;
+  // The inline pane starts closed: the screen opens on the build, not on a list (docs/declutter-spec.md 5).
+  const libraryOpen = layout.library === 'inline' ? libraryOpenPref ?? false : overlayOpen;
 
   useEffect(() => {
     store.set({ libraryMode: layout.library });
@@ -95,19 +97,17 @@ function Shell() {
 
   return (
     <div className={styles.shell}>
-      <TitleBar libraryOpen={libraryOpen} />
+      <TopBar libraryOpen={libraryOpen} />
       <div className={styles.main}>
         <LibraryPane layout={layout} open={libraryOpen} />
         <Workspace layout={layout} />
       </div>
-      <StatusBar />
-      <Toasts />
+      <Toasts left={libraryOpen ? layout.libraryWidth + 16 : 16} />
       <OcrDialog />
       <DropOverlay />
       <Dialogs />
-
+      <CompareDialog />
       <Announcer />
     </div>
   );
 }
-

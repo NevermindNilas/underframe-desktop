@@ -47,6 +47,7 @@ const fallback = {
   smokeResult: async () => {},
   smokeCapture: async () => null,
   smokeClick: async () => false,
+  smokePress: async () => false,
   scenes: false,
   sceneBootError: false,
   sceneCapture: async () => null,

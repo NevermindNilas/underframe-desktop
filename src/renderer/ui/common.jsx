@@ -1,6 +1,5 @@
-// Small shared pieces: delta badge, what the stat model leaves out per mod, app icon, empty states.
-import { Badge, Caption1, Subtitle2, Tooltip, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
-import { ArrowDownRegular, ArrowUpRegular } from '@fluentui/react-icons';
+// Small shared pieces: the delta text, what the stat model leaves out per mod, app icon, empty states.
+import { Caption1, Subtitle2, makeStyles, mergeClasses, tokens } from '@fluentui/react-components';
 import { fmtSignedPct } from '../format.js';
 import { collectModifiers } from '../../shared/stats.js';
 import { maxRank } from '../../shared/mods.js';
@@ -8,6 +7,10 @@ import { unhandledByMod } from '../model.js';
 
 const useStyles = makeStyles({
   numeric: { fontVariantNumeric: 'tabular-nums' },
+  delta: { fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', fontSize: tokens.fontSizeBase300, fontWeight: tokens.fontWeightSemibold },
+  up: { color: tokens.colorStatusSuccessForeground1 },
+  // Palette red, not the status token: it keeps 4.5:1 on the Readout's layer tone in both themes (#E37D80 in dark).
+  down: { color: tokens.colorPaletteRedForeground1 },
   empty: {
 
     display: 'flex',
@@ -24,26 +27,19 @@ const useStyles = makeStyles({
 });
 
 /**
- * Signed % change with an arrow icon; success/danger colour. Hidden when delta is null. Always the medium
- * size (12 px text, the spec's minimum), the same in the result card, compare, the picker and the sweep.
+ * "▲ 2.1%": a signed change as coloured text with an arrow, never colour alone and never a tinted pill
+ * (docs/declutter-spec.md 3). Nothing when there is no change.
  */
-export function DeltaBadge({ delta, tooltip }) {
+export function DeltaText({ delta, className, title }) {
   const styles = useStyles();
   if (delta == null || !Number.isFinite(delta)) return null;
   const up = delta > 0;
-  const badge = (
-    <Badge
-      appearance="tint"
-      color={up ? 'success' : 'danger'}
-      size="medium"
-      icon={up ? <ArrowUpRegular /> : <ArrowDownRegular />}
-      className={styles.numeric}
-      aria-label={`${up ? 'up' : 'down'} ${fmtSignedPct(Math.abs(delta)).replace(/^\+/, '')}`}
-    >
-      {fmtSignedPct(delta)}
-    </Badge>
+  const size = fmtSignedPct(Math.abs(delta)).replace(/^\+/, '');
+  return (
+    <span className={mergeClasses(styles.delta, up ? styles.up : styles.down, className)} title={title} aria-label={`${up ? 'up' : 'down'} ${size}`} data-testid="dps-delta">
+      {up ? '▲' : '▼'} {size}
+    </span>
   );
-  return tooltip ? <Tooltip content={tooltip} relationship="description">{badge}</Tooltip> : badge;
 }
 
 /** Stats of a mod the local stat model ignores, at max rank (cached per mod). */

@@ -1,23 +1,27 @@
-// The card gallery (docs/arsenal-spec.md 5): Mods | Arcanes | Best mod tabs, the smart search with tags,
-// filter chips, sort and size, and a virtualised grid of card images with keyboard navigation, a details flyout,
-// a context menu, drag and drop and the remove zone. It replaces the modal mod picker.
+// The Picker (docs/declutter-spec.md 1.1): the lower area of the Loadout. Its search bar is always there (at rest it
+// is the one line "Add or swap mods"; typing in it starts picking, and it keeps its element so no keystroke is
+// lost). While picking it adds the Mods | Arcanes | Best for slot N tabs, Filters, the count and Done, a line saying
+// where a card goes, and the virtualised card grid (keyboard navigation, context menu, drag and drop) replaces the
+// rest view passed as children ("Why this DPS"). The details flyout opens only when asked for (Alt+Enter, the card's
+// ⋯, the context menu), never on hover or focus. The remove zone covers the whole area while a slot is dragged.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Body1, Body1Strong, Button, Caption1, CounterBadge, Dropdown, Link, Menu, MenuDivider, MenuGroup, MenuGroupHeader, MenuItem,
-  MenuItemCheckbox, MenuItemRadio, MenuList, MenuPopover, MenuTrigger, MessageBar, MessageBarActions, MessageBarBody, Option,
-  Popover, PopoverSurface, PopoverTrigger, Portal, ProgressBar, SearchBox, Spinner, Subtitle2, Tab, TabList, Table, TableBody, TableCell,
-  TableHeader, TableHeaderCell, TableRow, Tag, TagGroup, Toolbar, ToolbarButton, ToolbarDivider, ToolbarToggleButton, Tooltip,
+  Body1, Body1Strong, Button, Caption1, Caption1Strong, CounterBadge, Divider, Dropdown, Field, Link, Menu, MenuItem,
+  MenuItemCheckbox, MenuList, MenuPopover, MenuTrigger, MessageBar, MessageBarActions, MessageBarBody, Option,
+  Popover, PopoverSurface, PopoverTrigger, Portal, ProgressBar, SearchBox, Spinner, Subtitle2, Switch, Tab, TabList, Table, TableBody, TableCell,
+  TableHeader, TableHeaderCell, TableRow, Tag, TagGroup, Tooltip,
   makeStyles, mergeClasses, tokens, useAnnounce,
 } from '@fluentui/react-components';
 import {
   ChevronDownRegular, CopyRegular, DeleteRegular, DismissRegular, FilterRegular, InfoRegular, ProhibitedRegular, SparkleRegular,
-  TextDescriptionRegular,
 } from '@fluentui/react-icons';
 
-import { actions, announce, focusLater, store } from '../controller.js';
-import { useApp, useDebounced, useDerived, useElementWidth, useScrollState } from '../hooks.js';
-import { CARD_RATIO, gridWindow } from '../layout.js';
+import { actions, announce, derived, focusLater, slotFocusId, store } from '../controller.js';
+import { useApp, useDebounced, useDerived, useElementSize, useScrollState } from '../hooks.js';
+import { pickerCardSize, gridWindow, CARD_GAP } from '../layout.js';
 import { GALLERY_SIZES } from '../controller.js';
+import { previewMode, previewSummary, sheetRows } from '../sheet.js';
+import { polarityDisplayName } from '../../shared/card-assets.js';
 import {
   EXILUS_SLOT, SLOT_COUNT, arcaneFocusId, arcaneIndexOf, buildCapacity, isArcaneSlot, slotLabel, swapSlots, sweepKeyOf, sweepView,
 } from '../model.js';
@@ -32,9 +36,11 @@ import { hasNoStats, unmodeledStats } from './common.jsx';
 import { GalleryCard, COMPAT_LABELS, fitFor } from './GalleryCard.jsx';
 import { ArtImage, PolarityGlyph, polarityName, useCards, useTextCards } from './art.jsx';
 
-const GAP = 8;
+const GAP = CARD_GAP;
 const SORTS = { match: 'Best match', name: 'Name (A-Z)', drain: 'Drain (low to high)', rarity: 'Rarity', gain: 'DPS gain' };
 const POL_MENU = ['AP_ATTACK', 'AP_DEFENSE', 'AP_TACTIC', 'AP_POWER', 'AP_WARD', 'AP_PRECEPT', 'AP_UMBRA', 'AP_UNIVERSAL'];
+/** How long the pointer may be off the cards before the If equipped column goes back to Change (no flicker). */
+const PREVIEW_CLEAR_MS = 160;
 
 const useStyles = makeStyles({
   root: {
@@ -43,18 +49,22 @@ const useStyles = makeStyles({
     flexGrow: 1,
     minWidth: 0,
     minHeight: 0,
-    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     position: 'relative',
   },
-  header: { display: 'flex', flexDirection: 'column', gap: '4px', flexShrink: 0, paddingTop: '6px' },
-  row: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0, minHeight: '36px' },
-  search: { flexGrow: 1, minWidth: '200px', maxWidth: '560px' },
-  sort: { minWidth: '150px', width: '170px' },
-  count: { color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', marginLeft: 'auto' },
-  chips: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap', minWidth: 0, overflow: 'hidden', paddingLeft: 0, paddingRight: 0 },
-  tags: { display: 'flex', gap: '4px', flexWrap: 'nowrap', overflow: 'hidden', minWidth: 0 },
-  context: { color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginLeft: 'auto', minWidth: 0, flexShrink: 1 },
+  bar: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, minWidth: 0, minHeight: '36px', flexShrink: 0 },
+  search: { flexGrow: 1, minWidth: '160px', maxWidth: 'none' },
+  sort: { minWidth: '170px' },
+  count: { color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' },
+  // "Slot 3 · Madurai · replacing Point Strike": where a card goes, on its own line so it is never cut off.
+  target: { display: 'flex', alignItems: 'baseline', gap: '6px', minWidth: 0, minHeight: '20px', paddingTop: '6px', flexShrink: 0 },
+  targetMain: { color: tokens.colorNeutralForeground1, whiteSpace: 'nowrap', flexShrink: 0 },
+  targetNote: { color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 },
+  tabs: { flexShrink: 0 },
+  filtersPopover: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, width: '300px' },
+  filterRow: { display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS },
+  tags: { display: 'flex', gap: '4px', flexWrap: 'wrap', minWidth: 0 },
   body: { position: 'relative', flexGrow: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', outlineStyle: 'none' },
+  rest: { position: 'relative', flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
   bodyStacked: { overflowY: 'visible' },
   messages: { display: 'flex', flexDirection: 'column', gap: '6px', ':not(:empty)': { paddingBottom: '8px' } },
   hint: { color: tokens.colorNeutralForeground2 },
@@ -99,16 +109,10 @@ const useStyles = makeStyles({
   num: { fontVariantNumeric: 'tabular-nums' },
   bestHead: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', paddingBottom: '8px' },
   grow: { flexGrow: 1, minWidth: '160px' },
-  filtersPopover: { display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '520px' },
   arcaneFlyoutArt: { width: '100%', height: '120px', backgroundColor: tokens.colorNeutralBackground3, borderRadius: tokens.borderRadiusMedium, overflow: 'hidden' },
 });
 
-/** Gallery card width for the layout and the Size preference. */
-export function cardWidthFor(layout, size) {
-  return size ? GALLERY_SIZES[size] : layout.cardWidth;
-}
-
-/** Search, filters and the current results, shared by the header and the grid. */
+/** Search, filters and the current results, shared by the bar and the grid. */
 function useGallery() {
   const ctx = useApp(s => s.ctx);
   const build = useApp(s => s.build);
@@ -127,95 +131,174 @@ function focusSearch() {
   document.querySelector('[data-testid="gallery-search"] input, input[data-testid="gallery-search"]')?.focus();
 }
 
-// ---------- header ----------
+/** Close the Picker from inside it: focus returns to the slot it was opened for (else stays in the search bar). */
+function closeFromPicker() {
+  actions.closePicker({ focus: true });
+}
 
-function ChipMenus({ gallery, compact }) {
+// ---------- the bar ----------
+
+/** Effect, Polarity, Rarity, Fits, Hide equipped, Sort, card size and text cards: one popover (spec 1.1). */
+function FiltersPopover({ gallery, view, count }) {
+  const styles = useStyles();
   const weaponName = useApp(s => s.build.weaponName);
+  const size = useApp(s => s.ui.galleryCardSize);
+  const textCards = useApp(s => s.ui.textCards);
   const isArcanes = gallery.tab === 'arcanes';
+  const tab = view.tab;
+  const filters = gallery.effects.length + gallery.pols.length + gallery.rarities.length + (gallery.hideEquipped ? 0 : 1) + (gallery.fits ? 0 : 1) + (gallery.sort !== 'match' ? 1 : 0);
+  const menu = (key, label, options, testId) => (
+    <Menu checkedValues={{ [key]: gallery[key] }} onCheckedValueChange={(_e, d) => actions.setGallery({ [key]: d.checkedItems })}>
+      <MenuTrigger disableButtonEnhancement>
+        <Button size="small" data-testid={testId} icon={<ChevronDownRegular />} iconPosition="after">{label}{gallery[key].length ? ` (${gallery[key].length})` : ''}</Button>
+      </MenuTrigger>
+      <MenuPopover><MenuList>{options.map(([value, text, icon]) => <MenuItemCheckbox key={value} name={key} value={value} icon={icon}>{text}</MenuItemCheckbox>)}</MenuList></MenuPopover>
+    </Menu>
+  );
   return (
-    <>
-      {isArcanes ? null : (
-        <>
-          <Menu checkedValues={{ effects: gallery.effects }} onCheckedValueChange={(_e, d) => actions.setGallery({ effects: d.checkedItems })}>
-            <MenuTrigger disableButtonEnhancement>
-              <ToolbarButton data-testid="gallery-chip-effect" aria-label="Effect filter" icon={<ChevronDownRegular />} iconPosition="after">Effect{gallery.effects.length ? ` (${gallery.effects.length})` : ''}</ToolbarButton>
-            </MenuTrigger>
-            <MenuPopover><MenuList>{EFFECT_CATEGORIES.map(c => <MenuItemCheckbox key={c} name="effects" value={c}>{c}</MenuItemCheckbox>)}</MenuList></MenuPopover>
-          </Menu>
-          <Menu checkedValues={{ pols: gallery.pols }} onCheckedValueChange={(_e, d) => actions.setGallery({ pols: d.checkedItems })}>
-            <MenuTrigger disableButtonEnhancement>
-              <ToolbarButton data-testid="gallery-chip-polarity" aria-label="Polarity filter" icon={<ChevronDownRegular />} iconPosition="after">Polarity{gallery.pols.length ? ` (${gallery.pols.length})` : ''}</ToolbarButton>
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>
-                {POL_MENU.map(p => (
-                  <MenuItemCheckbox key={p} name="pols" value={p} icon={<PolarityGlyph code={p} size={16} />}>{POLARITY_LABELS[p]}</MenuItemCheckbox>
-                ))}
-              </MenuList>
-            </MenuPopover>
-          </Menu>
-          <Menu checkedValues={{ rarities: gallery.rarities }} onCheckedValueChange={(_e, d) => actions.setGallery({ rarities: d.checkedItems })}>
-            <MenuTrigger disableButtonEnhancement>
-              <ToolbarButton data-testid="gallery-chip-rarity" aria-label="Rarity filter" icon={<ChevronDownRegular />} iconPosition="after">Rarity{gallery.rarities.length ? ` (${gallery.rarities.length})` : ''}</ToolbarButton>
-            </MenuTrigger>
-            <MenuPopover>
-              <MenuList>{RARITIES.map(r => <MenuItemCheckbox key={r} name="rarities" value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</MenuItemCheckbox>)}</MenuList>
-            </MenuPopover>
-          </Menu>
-        </>
-      )}
-      {compact ? null : <ToolbarDivider />}
-      <ToolbarToggleButton name="toggles" value="fits" data-testid="gallery-chip-fits" appearance="subtle">
-        Fits {weaponName}
-      </ToolbarToggleButton>
-      <ToolbarToggleButton name="toggles" value="hideEquipped" data-testid="gallery-chip-hide-equipped" appearance="subtle">Hide equipped</ToolbarToggleButton>
-    </>
+    <Popover withArrow positioning="below-end" trapFocus>
+      <PopoverTrigger disableButtonEnhancement>
+        <Button
+          appearance="subtle"
+          icon={<FilterRegular />}
+          data-testid="gallery-filters"
+          aria-label={filters ? `Filters, ${filters} changed` : 'Filters'}
+        >
+          Filters{filters ? <CounterBadge count={filters} size="small" appearance="ghost" color="informative" style={{ marginLeft: 4 }} /> : null}
+        </Button>
+      </PopoverTrigger>
+      <PopoverSurface className={styles.filtersPopover} aria-label="Filters">
+        {isArcanes ? null : (
+          <div className={styles.filterRow}>
+            {menu('effects', 'Effect', EFFECT_CATEGORIES.map(c => [c, c]), 'gallery-chip-effect')}
+            {menu('pols', 'Polarity', POL_MENU.map(p => [p, POLARITY_LABELS[p], <PolarityGlyph key={p} code={p} size={16} />]), 'gallery-chip-polarity')}
+            {menu('rarities', 'Rarity', RARITIES.map(r => [r, r.charAt(0).toUpperCase() + r.slice(1)]), 'gallery-chip-rarity')}
+          </div>
+        )}
+        <Switch label={`Only cards that fit ${weaponName}`} checked={gallery.fits} onChange={(_e, d) => actions.setGallery({ fits: d.checked })} data-testid="gallery-chip-fits" />
+        <Switch label="Hide equipped cards" checked={gallery.hideEquipped} onChange={(_e, d) => actions.setGallery({ hideEquipped: d.checked })} data-testid="gallery-chip-hide-equipped" />
+        <Field label="Sort" size="small">
+          <Dropdown
+            size="small"
+            className={styles.sort}
+            data-testid="gallery-sort"
+            value={SORTS[tab === 'best' ? 'gain' : gallery.sort]}
+            selectedOptions={[tab === 'best' ? 'gain' : gallery.sort]}
+            disabled={tab === 'best'}
+            onOptionSelect={(_e, d) => actions.setGallery({ sort: d.optionValue })}
+            inlinePopup
+          >
+            {Object.entries(SORTS).map(([k, v]) => (
+              <Option key={k} value={k} text={v} disabled={k === 'gain' && !view.sortGainEnabled}>
+                {k === 'gain' && !view.sortGainEnabled ? 'DPS gain (run Find best mod first)' : v}
+              </Option>
+            ))}
+          </Dropdown>
+        </Field>
+        <Field label="Card size" size="small">
+          <Dropdown size="small" value={{ auto: 'Automatic', small: 'Small', medium: 'Medium', large: 'Large' }[size ?? 'auto']} selectedOptions={[size ?? 'auto']} onOptionSelect={(_e, d) => actions.setGalleryCardSize(d.optionValue === 'auto' ? null : d.optionValue)} data-testid="gallery-size" inlinePopup>
+            <Option value="auto">Automatic</Option>
+            <Option value="small">Small</Option>
+            <Option value="medium">Medium</Option>
+            <Option value="large">Large</Option>
+          </Dropdown>
+        </Field>
+        <Switch label="Text cards instead of card images" checked={textCards} onChange={(_e, d) => actions.setTextCards(d.checked)} />
+        <Divider />
+        <Caption1 className={styles.count}>{count} {isArcanes ? 'arcanes' : 'mods'} shown{filters ? '' : ' · default filters'}</Caption1>
+        {filters ? <Link as="button" onClick={() => actions.clearGalleryFilters()} style={{ alignSelf: 'flex-start' }}>Reset filters</Link> : null}
+      </PopoverSurface>
+    </Popover>
   );
 }
 
+/** Non-default filters and typed operators, as removable tags (at the top of the card grid). */
 function FilterTags({ view, gallery }) {
+  const styles = useStyles();
   const tags = [];
-  if (view.exilusScoped) tags.push({ id: 'exilus-scope', label: 'Exilus slot', fixed: true });
+  if (view.exilusScoped) tags.push({ id: 'exilus-scope', label: 'Exilus slot · showing Exilus mods', fixed: true });
   for (const t of view.parsed.tokens) {
     if ((t.kind === 'filter' || t.kind === 'neg' || t.kind === 'phrase') && t.trailing) tags.push({ id: `q:${t.start}`, label: t.label, token: t });
   }
   for (const e of gallery.effects) tags.push({ id: `effect:${e}`, label: `Effect: ${e}`, menu: ['effects', e] });
   for (const p of gallery.pols) tags.push({ id: `pol:${p}`, label: `Polarity: ${POLARITY_LABELS[p]}`, menu: ['pols', p] });
   for (const r of gallery.rarities) tags.push({ id: `rarity:${r}`, label: `Rarity: ${r.charAt(0).toUpperCase()}${r.slice(1)}`, menu: ['rarities', r] });
+  if (!gallery.hideEquipped) tags.push({ id: 'show-equipped', label: 'Showing equipped', set: { hideEquipped: true } });
+  if (!gallery.fits) tags.push({ id: 'all-weapons', label: 'All weapons', set: { fits: true } });
   if (!tags.length) return null;
   const dismiss = id => {
     const t = tags.find(x => x.id === id);
     if (!t || t.fixed) return;
     if (t.token) actions.setGalleryQuery(removeToken(store.get().gallery.query, t.token));
+    else if (t.set) actions.setGallery(t.set);
     else if (t.menu) {
       const [key, value] = t.menu;
       actions.setGallery({ [key]: store.get().gallery[key].filter(v => v !== value) });
     }
   };
   return (
-    <TagGroup size="small" onDismiss={(_e, d) => dismiss(d.value)} aria-label="Active filters" style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
+    <TagGroup size="small" onDismiss={(_e, d) => dismiss(d.value)} aria-label="Active filters" className={styles.tags}>
       {tags.map(t => (
-        <Tag key={t.id} value={t.id} size="small" dismissible={!t.fixed} data-testid={`gallery-chip-${t.id.replace(/[^a-z0-9]+/gi, '-')}`} appearance={t.fixed ? 'brand' : 'outline'}>
-          {t.fixed ? 'Exilus slot · showing Exilus mods' : t.label}
+        <Tag key={t.id} value={t.id} size="small" dismissible={!t.fixed} data-testid={`gallery-chip-${t.id.replace(/[^a-z0-9]+/gi, '-')}`} appearance="outline">
+          {t.label}
         </Tag>
       ))}
     </TagGroup>
   );
 }
 
-function GalleryHeader({ view, gallery, compact, count }) {
+/** The search box's placeholder: short, so it fits at any width; where a card goes is the target line's job. */
+function placeholderFor({ open, tab }) {
+  if (!open) return 'Add or swap mods (Ctrl+F)';
+  return tab === 'arcanes' ? 'Search arcanes' : 'Search mods: name, effect, cc, drain<=6';
+}
+
+/**
+ * Where a card goes, as its own line above the cards (spec 1.1): "Slot 3 · Madurai · replacing Point Strike". When the
+ * Picker chose the slot itself (a full build, opened from a stat row, Ctrl+F or typing), it says so and how to change it.
+ */
+function TargetLine({ view }) {
+  const styles = useStyles();
+  const build = useApp(s => s.build);
+  const auto = useApp(s => s.pickerAuto);
+  const selected = useApp(s => s.selectedSlot);
+  const { capacity } = useDerived();
+  if (view.tab === 'best') return null;
+  const slot = view.targetSlot;
+  let main;
+  let note = null;
+  if (view.tab === 'arcanes') {
+    const i = Math.max(0, arcaneIndexOf(slot));
+    const now = build.arcanes?.[i]?.name;
+    main = `${i === 1 ? 'Kitgun arcane slot' : 'Arcane slot'}${now ? ` · replacing ${now}` : ''}`;
+  } else if (Number.isInteger(slot)) {
+    const pol = polarityDisplayName(capacity?.polarities?.[slot]);
+    const now = build.mods[slot]?.name;
+    main = [slot === EXILUS_SLOT ? 'Exilus slot' : `Slot ${slot + 1}`, pol, now ? `replacing ${now}` : null].filter(Boolean).join(' · ');
+    if (auto) note = '· it adds the least damage on paper. Click another slot to change.';
+    else if (selected == null) note = '· the first empty slot. Click a slot to choose another.';
+  } else {
+    main = 'Choose a slot for the card';
+  }
+  return (
+    <div className={styles.target} data-testid="picker-target" id="picker-target">
+      <Caption1Strong className={styles.targetMain}>{main}</Caption1Strong>
+      {note ? <Caption1 className={styles.targetNote} title={note}>{note}</Caption1> : null}
+    </div>
+  );
+}
+
+/** The bar: the search alone at rest; tabs, search, Filters, count and Done while picking. */
+function PickerBar({ view, gallery, open, count }) {
   const styles = useStyles();
   const sweep = useApp(s => s.sweep);
-  const selectedSlot = useApp(s => s.selectedSlot);
   const sweepRunning = sweep?.status === 'running';
-  const size = useApp(s => s.ui.galleryCardSize);
-  const textCards = useApp(s => s.ui.textCards);
   const { announce: speak } = useAnnounce();
-  const settledCount = useDebounced(`${count}|${gallery.query}|${gallery.tab}`, 600);
+  const settledCount = useDebounced(`${count}|${gallery.query}|${gallery.tab}|${open}`, 600);
   const lastSpoken = useRef('');
   useEffect(() => {
-    const [n] = settledCount.split('|');
-    if (!lastSpoken.current) { lastSpoken.current = settledCount; return; }
+    const [n, , , isOpen] = settledCount.split('|');
+    if (isOpen !== 'true') { lastSpoken.current = ''; return; }
     if (lastSpoken.current === settledCount) return;
     lastSpoken.current = settledCount;
     const noun = gallery.tab === 'arcanes' ? 'arcanes' : 'mods';
@@ -225,172 +308,59 @@ function GalleryHeader({ view, gallery, compact, count }) {
   const tab = view.tab;
   const isArcanes = tab === 'arcanes';
   const noun = isArcanes ? (count === 1 ? 'arcane' : 'arcanes') : count === 1 ? 'mod' : 'mods';
-  const bestLabel = sweepRunning ? `Best mod ${sweep.done}/${sweep.total}` : 'Best mod';
-  const filters = gallery.effects.length + gallery.pols.length + gallery.rarities.length + (gallery.hideEquipped ? 1 : 0) + (gallery.fits ? 0 : 1);
-  // Operators typed in the search (drain<=10, pol:v, -primed, "a phrase") are active filters too.
-  const queryFilters = view.parsed.tokens.filter(t => t.kind === 'filter' || t.kind === 'neg' || t.kind === 'phrase').length;
+  const bestLabel = sweep ? `Best for ${sweep.slot === EXILUS_SLOT ? 'Exilus' : `slot ${sweep.slot + 1}`}${sweepRunning ? ` ${sweep.done}/${sweep.total}` : ''}` : '';
   const onSearchKey = e => {
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'ArrowDown' && open) {
       e.preventDefault();
-      const first = document.querySelector('[data-testid="gallery"] [role="gridcell"] button');
-      first?.focus();
+      document.querySelector('[data-testid="gallery"] [role="gridcell"] button')?.focus();
     } else if (e.key === 'Enter') {
       e.preventDefault();
+      if (!open) { actions.openPicker(); return; }
       const first = view.items.find(i => i.state !== 'blocked' && i.state !== 'equipped') ?? view.items.find(i => i.state !== 'blocked');
       if (!first) return;
       if (first.kind === 'arcane') actions.equipArcane(first.name, Math.max(0, arcaneIndexOf(view.targetSlot)));
-      else if (tab === 'best') actions.equipMod(sweep.slot, first.name, null, { focus: false });
+      else if (tab === 'best') actions.equipBest(first.name);
       else actions.equipFromGallery(first.name);
-    } else if (e.key === 'Escape' && !gallery.query) {
-      const sel = store.get().selectedSlot;
-      if (sel != null) {
-        e.preventDefault();
-        const id = isArcaneSlot(sel) ? arcaneFocusId(arcaneIndexOf(sel)) : store.get().build.mods[sel] ? `slot-select-${sel}` : `slot-add-${sel}`;
-        document.querySelector(`[data-focus-id="${id}"]`)?.focus();
-      }
+    } else if (e.key === 'Escape' && open) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeFromPicker();
     }
   };
-
-  const toolbar = (
-    <Toolbar
-      aria-label="Gallery filters"
-      size="small"
-      className={styles.chips}
-      checkedValues={{ toggles: [...(gallery.fits ? ['fits'] : []), ...(gallery.hideEquipped ? ['hideEquipped'] : [])] }}
-      onCheckedValueChange={(_e, d) => {
-        if (d.name === 'toggles') actions.setGallery({ fits: d.checkedItems.includes('fits'), hideEquipped: d.checkedItems.includes('hideEquipped') });
-      }}
-    >
-      <ChipMenus gallery={gallery} compact={compact} />
-    </Toolbar>
-  );
-
-  const bestButton = Number.isInteger(selectedSlot) && tab !== 'best' && !isArcanes ? (
-    <Tooltip content={sweepRunning ? 'A best-mod search is already running' : `Test every compatible mod in ${slotLabel(selectedSlot).toLowerCase()} and rank them by DPS gain`} relationship="description">
-      <Button size="small" appearance="subtle" icon={<SparkleRegular />} disabledFocusable={sweepRunning} onClick={() => actions.startSweep(selectedSlot)}>
-        Find best mod for {selectedSlot === EXILUS_SLOT ? 'Exilus' : `slot ${selectedSlot + 1}`}
-      </Button>
-    </Tooltip>
-  ) : null;
-
-  const tabs = (
-    <TabList size="small" selectedValue={tab} onTabSelect={(_e, d) => actions.setGalleryTab(d.value)} aria-label="Gallery">
-      <Tab value="mods" data-testid="gallery-tab-mods">{tab === 'mods' ? `Mods ${view.total}` : 'Mods'}</Tab>
-      <Tab value="arcanes" data-testid="gallery-tab-arcanes">Arcanes</Tab>
-      {sweep ? (
-        <Tab value="best" data-testid="gallery-tab-best" icon={sweepRunning ? <Spinner size="extra-tiny" aria-hidden="true" /> : undefined}>{bestLabel}</Tab>
-      ) : null}
-    </TabList>
-  );
-  const search = (
-    <SearchBox
-      size="small"
-      className={styles.search}
-      input={{ 'data-testid': 'gallery-search', 'data-focus-id': 'gallery-search' }}
-      placeholder={isArcanes ? 'Search arcanes' : 'Search mods: name, effect, cc, drain<=6…'}
-      aria-label={isArcanes ? 'Search arcanes' : 'Search mods'}
-      value={gallery.query}
-      onChange={(_e, d) => actions.setGalleryQuery(d.value)}
-      onKeyDown={onSearchKey}
-    />
-  );
-  const sort = (
-    <Dropdown
-      size="small"
-      className={styles.sort}
-      aria-label="Sort"
-      data-testid="gallery-sort"
-      value={`Sort: ${SORTS[tab === 'best' ? 'gain' : gallery.sort]}`}
-      selectedOptions={[tab === 'best' ? 'gain' : gallery.sort]}
-      disabled={tab === 'best'}
-      onOptionSelect={(_e, d) => actions.setGallery({ sort: d.optionValue })}
-    >
-      {Object.entries(SORTS).map(([k, v]) => (
-        <Option key={k} value={k} text={v} disabled={k === 'gain' && !view.sortGainEnabled}>
-          {k === 'gain' && !view.sortGainEnabled ? 'DPS gain (run Find best mod first)' : v}
-        </Option>
-      ))}
-    </Dropdown>
-  );
-  const sizeMenu = (
-    <Menu
-      checkedValues={{ size: [size ?? 'auto'], text: textCards ? ['text'] : [] }}
-      onCheckedValueChange={(_e, d) => {
-        if (d.name === 'size') actions.setGalleryCardSize(d.checkedItems[0] === 'auto' ? null : d.checkedItems[0]);
-        if (d.name === 'text') actions.setTextCards(d.checkedItems.includes('text'));
-      }}
-    >
-      <MenuTrigger disableButtonEnhancement>
-        <Tooltip content="Card size" relationship="label"><Button size="small" appearance="subtle" icon={<TextDescriptionRegular />} data-testid="gallery-size" /></Tooltip>
-      </MenuTrigger>
-      <MenuPopover>
-        <MenuList>
-          <MenuGroup>
-            <MenuGroupHeader>Card size</MenuGroupHeader>
-            <MenuItemRadio name="size" value="auto">Automatic</MenuItemRadio>
-            <MenuItemRadio name="size" value="small">Small</MenuItemRadio>
-            <MenuItemRadio name="size" value="medium">Medium</MenuItemRadio>
-            <MenuItemRadio name="size" value="large">Large</MenuItemRadio>
-          </MenuGroup>
-          <MenuDivider />
-          <MenuItemCheckbox name="text" value="text">Text cards</MenuItemCheckbox>
-        </MenuList>
-      </MenuPopover>
-    </Menu>
-  );
-  const countText = (
-    <Caption1 className={styles.count} role="status" aria-live="off" data-testid="gallery-count">
-      {count ? `${count} ${noun}` : `No ${isArcanes ? 'arcanes' : 'mods'} match`}
-    </Caption1>
-  );
-
-  if (compact) {
-    return (
-      <div className={styles.header}>
-        <div className={styles.row}>
-          {tabs}
-          {search}
-          <Popover withArrow positioning="below-end">
-            <PopoverTrigger disableButtonEnhancement>
-              <Button
-                size="small"
-                appearance="subtle"
-                icon={<FilterRegular />}
-                data-testid="gallery-filters"
-                aria-label={filters + queryFilters ? `Filters, ${filters + queryFilters} active` : 'Filters'}
-              >
-                Filters {filters + queryFilters ? <CounterBadge count={filters + queryFilters} size="small" appearance="filled" color="brand" /> : null}
-              </Button>
-            </PopoverTrigger>
-            <PopoverSurface className={styles.filtersPopover}>
-              {toolbar}
-              <FilterTags view={view} gallery={gallery} />
-              {filters ? <Link as="button" onClick={() => actions.clearGalleryFilters()}>Clear filters</Link> : null}
-            </PopoverSurface>
-          </Popover>
-          {sort}
-          {sizeMenu}
-          {countText}
-        </div>
-      </div>
-    );
-  }
   return (
-    <div className={styles.header}>
-      <div className={styles.row}>
-        {tabs}
-        {search}
-        {sort}
-        {sizeMenu}
-        {countText}
-      </div>
-      <div className={styles.row}>
-        {toolbar}
-        <FilterTags view={view} gallery={gallery} />
-        {filters ? <Link as="button" onClick={() => actions.clearGalleryFilters()} style={{ whiteSpace: 'nowrap' }}>Clear filters</Link> : null}
-        {bestButton}
-        <Caption1 className={styles.context}>{view.contextText}</Caption1>
-      </div>
+    <div className={styles.bar} data-testid="picker-bar">
+      {open ? (
+        <TabList className={styles.tabs} size="small" selectedValue={tab} onTabSelect={(_e, d) => actions.setGalleryTab(d.value)} aria-label="Picker">
+          <Tab value="mods" data-testid="gallery-tab-mods">Mods</Tab>
+          <Tab value="arcanes" data-testid="gallery-tab-arcanes">Arcanes</Tab>
+          {sweep ? (
+            <Tab value="best" data-testid="gallery-tab-best" icon={sweepRunning ? <Spinner size="extra-tiny" aria-hidden="true" /> : <SparkleRegular />}>{bestLabel}</Tab>
+          ) : null}
+        </TabList>
+      ) : null}
+      <SearchBox
+        className={styles.search}
+        input={{ 'data-testid': 'gallery-search', 'data-focus-id': 'gallery-search' }}
+        placeholder={placeholderFor({ open, tab })}
+        aria-label={isArcanes && open ? 'Search arcanes' : 'Search mods'}
+        aria-describedby={open && tab !== 'best' ? 'picker-target' : undefined}
+        aria-expanded={open}
+        aria-controls={open ? 'picker-grid' : undefined}
+        value={gallery.query}
+        onChange={(_e, d) => actions.setGalleryQuery(d.value)}
+        onKeyDown={onSearchKey}
+      />
+      {open ? (
+        <>
+          <FiltersPopover gallery={gallery} view={view} count={count} />
+          <Caption1 className={styles.count} role="status" aria-live="off" data-testid="gallery-count">
+            {count ? `${count} ${noun}` : `No ${isArcanes ? 'arcanes' : 'mods'}`}
+          </Caption1>
+          <Tooltip content="Done (Esc)" relationship="description">
+            <Button appearance="subtle" onClick={closeFromPicker} data-testid="picker-done">Done</Button>
+          </Tooltip>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -407,7 +377,10 @@ function BestHeader() {
   const running = sweep.status === 'running';
   const stale = !running && sweep.key !== sweepKeyOf(ctx, build, sweep.slot);
   const { base } = sweepView(sweep, build.mods[sweep.slot]?.name ?? null);
-  const baseline = base.dps == null ? '' : base.kind === 'mod' ? `baseline ${fmtInt(base.dps)} DPS with ${base.name}` : `baseline ${fmtInt(base.dps)} DPS with the slot empty`;
+  // Gains only, no second DPS number next to the Readout's: the search is a quick 3-run estimate at max rank, the
+  // Readout averages 8 runs at the ranks you set, so the two would differ.
+  const against = base.dps == null ? '' : base.kind === 'mod' ? `Gains against ${base.name} at max rank` : 'Gains against the slot left empty';
+  const baselineTip = base.dps == null ? null : `Quick estimate: 3 seeded runs per mod at max rank (baseline ${fmtInt(base.dps)} DPS). The Readout averages 8 runs at your ranks, so its number differs.`;
   return (
     <div className={styles.messages}>
       <div className={styles.bestHead}>
@@ -422,7 +395,11 @@ function BestHeader() {
         ) : (
           <>
             <Body1Strong>Best mod for {label}</Body1Strong>
-            <Caption1 className={styles.hint}>{[baseline, 'max rank, 3 seeded runs'].filter(Boolean).join(' · ')}</Caption1>
+            {against ? (
+              <Tooltip content={baselineTip} relationship="description">
+                <Caption1 className={styles.hint} tabIndex={-1} data-testid="best-baseline">{against} · quick estimate</Caption1>
+              </Tooltip>
+            ) : null}
             <span style={{ flexGrow: 1 }} />
             <Button size="small" onClick={() => actions.startSweep(sweep.slot)}>Run again</Button>
             <Tooltip content="Close results" relationship="label">
@@ -580,7 +557,7 @@ function useGalleryTarget() {
  * It stays below the top of `bounds` (the card grid's scroll area), so it never covers the gallery's own search
  * box and filter buttons; when there is less room below, it scrolls inside.
  */
-function Flyout({ target, bounds = null, label, onMouseEnter, onMouseLeave, onClose, children }) {
+function Flyout({ target, bounds = null, label, onClose, onMouseEnter, onMouseLeave, children }) {
   const styles = useStyles();
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
@@ -600,9 +577,15 @@ function Flyout({ target, bounds = null, label, onMouseEnter, onMouseLeave, onCl
   });
   useEffect(() => {
     const onKey = e => { if (e.key === 'Escape') onClose(); };
+    // Asked for, so it stays until dismissed: Esc, a press anywhere else, or another card.
+    const onDown = e => { if (!ref.current?.contains(e.target) && !target?.contains?.(e.target)) onClose(); };
     document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+    document.addEventListener('pointerdown', onDown, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [onClose, target]);
   return (
     <Portal>
       <div
@@ -660,10 +643,23 @@ function prepareDragImage(name, url) {
   src.src = url;
 }
 
-// ---------- the grid ----------
+/// ---------- the Picker ----------
 
-export function Gallery({ layout, scrollEl = null }) {
+/** The slot a card would go into for the stats preview (equipped and blocked cards preview nothing). */
+function previewFor(item, view, sweep) {
+  if (!item || item.state !== 'ok') return null;
+  if (item.kind === 'arcane') return { kind: 'arcane', name: item.name, slot: view.targetSlot };
+  const slot = view.tab === 'best' ? sweep?.slot : view.targetSlot;
+  return Number.isInteger(slot) ? { kind: 'mod', name: item.name, slot } : null;
+}
+
+/**
+ * The lower area of the Loadout. `children` is the rest view (Why this DPS). `scrollEl` is the stacked layout's
+ * page scroll area (the grid then scrolls with the page).
+ */
+export function Picker({ layout, scrollEl = null, children }) {
   const styles = useStyles();
+  const open = useApp(s => s.pickerOpen);
   const { ctx, gallery, view, capacity } = useGallery();
   const sweep = useApp(s => s.sweep);
   const drag = useApp(s => s.drag);
@@ -671,22 +667,25 @@ export function Gallery({ layout, scrollEl = null }) {
   const cardsReady = useApp(s => s.cards);
   const textCards = useTextCards();
   const sizePref = useApp(s => s.ui.galleryCardSize);
-
-  const cardW = cardWidthFor(layout, sizePref);
-  const cardH = Math.round(cardW * CARD_RATIO);
-  const rowH = cardH + GAP;
-  const [gridRef, gridWidth] = useElementWidth();
   const [bodyEl, setBodyEl] = useState(null);
+  const [bodyRef, bodySize] = useElementSize();
   const scrollTarget = scrollEl ?? bodyEl;
-  const { scrollTop, viewport } = useScrollState(scrollTarget);
+  const { scrollTop, viewport } = useScrollState(open ? scrollTarget : null);
   const gridEl = useRef(null);
   const [offset, setOffset] = useState(0);
-  const columns = Math.max(1, Math.floor((gridWidth + GAP) / (cardW + GAP)));
-  const items = view.items;
+  // Three full rows when they fit (spec 2.2); the stacked layout scrolls, so it keeps a fixed size.
+  const card = scrollEl
+    ? pickerCardSize(bodySize.width || 600, 10000, sizePref ? GALLERY_SIZES[sizePref] : 132)
+    : pickerCardSize(bodySize.width || 600, Math.max(0, (bodySize.height || 400) - 8 - layout.gutter), sizePref ? GALLERY_SIZES[sizePref] : null);
+  const cardW = card.width;
+  const cardH = card.height;
+  const rowH = cardH + GAP;
+  const columns = card.columns;
+  const items = open ? view.items : [];
   const target = useGalleryTarget();
   const slotPol = Number.isInteger(target) ? capacity?.polarities?.[target] : null;
 
-  // The grid's top inside the scroll content (the stacked layout scrolls past the stage and results first).
+  // The grid's top inside the scroll content (messages above it; the stacked layout scrolls past the Loadout first).
   useEffect(() => {
     if (!scrollTarget || !gridEl.current) return;
     const s = scrollTarget.getBoundingClientRect();
@@ -709,6 +708,13 @@ export function Gallery({ layout, scrollEl = null }) {
     if (i >= 0 && i !== focusIndex) setFocusIndex(i);
     else if (i < 0 && focusIndex >= items.length) setFocusIndex(Math.max(0, items.length - 1));
   }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A new picking session starts at the top.
+  useEffect(() => {
+    if (!open) return;
+    setFocusIndex(0);
+    focusName.current = null;
+    if (bodyEl) bodyEl.scrollTop = 0;
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scrollRowIntoView = row => {
     if (!scrollTarget) return;
@@ -740,25 +746,49 @@ export function Gallery({ layout, scrollEl = null }) {
       timers.current.flash = setTimeout(() => setFlash(null), 1000);
       return;
     }
+    clearTimeout(timers.current.preview);
+    actions.setPreview(null);
     if (item.kind === 'arcane') actions.equipArcane(item.name, Math.max(0, arcaneIndexOf(view.targetSlot)));
-    else if (view.tab === 'best' && sweep) {
-      if (actions.equipMod(sweep.slot, item.name, null, { focus: false })) announce(`${item.name} equipped in ${slotLabel(sweep.slot).toLowerCase()}. Average DPS updating.`);
-    } else actions.equipFromGallery(item.name);
+    else if (view.tab === 'best' && sweep) actions.equipBest(item.name);
+    else actions.equipFromGallery(item.name);
   };
 
-  const openFlyout = (item, el, delay) => {
-    clearTimeout(timers.current.close);
-    clearTimeout(timers.current.open);
-    timers.current.open = setTimeout(() => setFlyout({ item, el }), delay);
+  // The stats sheet previews the card under the pointer or keyboard focus; focus also says it, after a pause.
+  const showPreview = (item, { speak = false } = {}) => {
+    clearTimeout(timers.current.preview);
+    clearTimeout(timers.current.speak);
+    const p = previewFor(item, view, sweep);
+    actions.setPreview(p);
+    if (speak && p) {
+      timers.current.speak = setTimeout(() => {
+        const { build } = store.get();
+        const d = derived();
+        const mode = d.stats?.mode;
+        if (!mode || store.get().preview?.name !== p.name) return;
+        announce(previewSummary(sheetRows(mode, d.baseMode, { hasReload: Boolean(d.stats.reload), preview: previewMode(ctx, build, p) })));
+      }, 700);
+    }
   };
-  const closeFlyout = (delay = 150) => {
-    clearTimeout(timers.current.open);
-    clearTimeout(timers.current.close);
-    timers.current.close = setTimeout(() => setFlyout(null), delay);
+  const clearPreview = () => {
+    clearTimeout(timers.current.preview);
+    clearTimeout(timers.current.speak);
+    timers.current.preview = setTimeout(() => actions.setPreview(null), PREVIEW_CLEAR_MS);
   };
+
+  // The flyout covers the cards beside it, so it opens only when asked for and gives way to the next card.
+  // The pointer may cross a neighbouring card on its way into the flyout: another card closes it after a short grace.
+  const openFlyout = (item, el) => { clearTimeout(timers.current.fly); setFlyout({ item, el }); };
+  const leaveFlyoutFor = (item, { now = false } = {}) => {
+    clearTimeout(timers.current.fly);
+    const close = () => setFlyout(f => (f && f.item.name !== item.name ? null : f));
+    if (now) close();
+    else timers.current.fly = setTimeout(close, 250);
+  };
+  const closeFlyoutNow = useCallback(() => setFlyout(null), []);
   useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
   // The flyout follows the data (a re-render with new items): drop it when its card is gone.
   useEffect(() => { if (flyout && !items.some(i => i.name === flyout.item.name)) setFlyout(null); }, [items]); // eslint-disable-line
+  useEffect(() => { if (!open) { setFlyout(null); setMenu(null); } }, [open]);
 
   const onGridKey = e => {
     const i = Number(e.target?.dataset?.index);
@@ -785,13 +815,9 @@ export function Gallery({ layout, scrollEl = null }) {
       if (item.state !== 'blocked') actions.startPickup({ kind: item.kind, name: item.name, from: item.kind === 'mod' && item.slot != null ? item.slot : 'gallery', target: item.kind === 'arcane' ? view.targetSlot : undefined });
       else activate(item);
     } else if (k === 'Escape') {
-      if (flyout) { e.preventDefault(); setFlyout(null); return; }
-      const sel = store.get().selectedSlot;
-      if (sel != null) {
-        e.preventDefault();
-        const id = isArcaneSlot(sel) ? arcaneFocusId(arcaneIndexOf(sel)) : store.get().build.mods[sel] ? `slot-select-${sel}` : `slot-add-${sel}`;
-        document.querySelector(`[data-focus-id="${id}"]`)?.focus();
-      }
+      e.preventDefault();
+      if (flyout) { setFlyout(null); return; }
+      closeFromPicker();
     } else if ((e.shiftKey && k === 'F10') || k === 'ContextMenu') {
       e.preventDefault();
       setMenu({ item, el: e.target });
@@ -807,19 +833,20 @@ export function Gallery({ layout, scrollEl = null }) {
     onFocus: e => {
       setFocusIndex(i);
       focusName.current = item.name;
-      if (e.target.matches(':focus-visible')) openFlyout(item, e.target, 600);
+      leaveFlyoutFor(item, { now: true });
+      showPreview(item, { speak: e.target.matches(':focus-visible') });
     },
-    onBlur: () => closeFlyout(100),
-    onMouseEnter: e => {
+    onBlur: () => { clearPreview(); },
+    onMouseEnter: () => {
       prepareDragImage(item.name, item.kind === 'mod' && !textCards ? cards?.modCompactUrl(item.name) : !textCards ? cards?.arcaneUrl(item.name) : null);
-      openFlyout(item, e.currentTarget, 400);
+      leaveFlyoutFor(item);
+      showPreview(item);
     },
-    onMouseLeave: () => closeFlyout(150),
+    onMouseLeave: () => { clearPreview(); },
     onContextMenu: e => { e.preventDefault(); setFlyout(null); setMenu({ item, el: e.currentTarget }); },
     onDragStart: e => {
       if (item.state === 'blocked') { e.preventDefault(); return; }
       setFlyout(null);
-      clearTimeout(timers.current.open);
       const from = item.kind === 'mod' && item.slot != null ? item.slot : 'gallery';
       e.dataTransfer.setData(item.kind === 'arcane' ? ARCANE_MIME : MOD_MIME, JSON.stringify({ name: item.name, from }));
       e.dataTransfer.setData('text/plain', item.name);
@@ -854,6 +881,7 @@ export function Gallery({ layout, scrollEl = null }) {
             tabIndex={i === Math.min(focusIndex, items.length - 1) ? 0 : -1}
             flash={flash === item.name}
             handlers={handlersFor(item, i)}
+            onDetails={el => openFlyout(item, el)}
           />
         </div>,
       );
@@ -868,11 +896,12 @@ export function Gallery({ layout, scrollEl = null }) {
   const query = gallery.query.trim();
   const isArcanes = view.tab === 'arcanes';
   const noun = isArcanes ? 'arcanes' : 'mods';
-  const hasFilters = gallery.effects.length + gallery.pols.length + gallery.rarities.length > 0 || gallery.hideEquipped;
+  const hasFilters = gallery.effects.length + gallery.pols.length + gallery.rarities.length > 0 || !gallery.hideEquipped || !gallery.fits;
   const messages = (
     <div className={styles.messages}>
-
       {view.tab === 'best' ? <BestHeader /> : null}
+      <FilterTags view={view} gallery={gallery} />
+      {cardsReady && !cardsReady.available ? <Caption1 className={styles.hint}>Card images aren't installed: showing text cards.</Caption1> : null}
       {view.unknown.map(u => (
         <Caption1 key={u.raw} className={styles.hint}>
           {u.message ?? `Unknown filter "${u.key}".`}
@@ -890,11 +919,16 @@ export function Gallery({ layout, scrollEl = null }) {
     </div>
   );
 
-  const empty = !items.length ? (
+  const empty = open && !items.length ? (
     <div className={styles.empty}>
       {view.emptyText && !query ? <Body1>{view.emptyText}</Body1> : (
         <>
           <Body1>{query ? `No ${noun} match "${query}".` : `No ${noun} match these filters.`}</Body1>
+          {view.hiddenEquipped?.length ? (
+            <Body1 data-testid="picker-hidden-equipped">
+              {view.hiddenEquipped.map(h => `${h.name} is equipped in ${isArcaneSlot(h.slot) ? 'the arcane slot' : h.slot === EXILUS_SLOT ? 'the Exilus slot' : `slot ${h.slot + 1}`}`).join('; ')} (equipped cards are hidden).
+            </Body1>
+          ) : null}
           {view.suggestions.length ? (
             <Body1>
               Did you mean {view.suggestions.map((s, i) => (
@@ -903,83 +937,88 @@ export function Gallery({ layout, scrollEl = null }) {
             </Body1>
           ) : null}
           <div className={styles.emptyActions}>
+            {view.hiddenEquipped?.length ? <Button size="small" appearance="primary" onClick={() => actions.setGallery({ hideEquipped: false })} data-testid="picker-show-equipped">Show equipped</Button> : null}
             {query ? <Button size="small" onClick={() => { actions.setGalleryQuery(''); focusSearch(); }}>Clear search</Button> : null}
-            {hasFilters ? <Button size="small" onClick={() => actions.clearGalleryFilters()}>Clear filters</Button> : null}
+            {hasFilters ? <Button size="small" onClick={() => actions.clearGalleryFilters()}>Reset filters</Button> : null}
           </div>
         </>
       )}
     </div>
   ) : null;
 
+  const removeZone = dragFromSlot ? (
+    <div
+      className={mergeClasses(styles.removeZone, overRemove && styles.removeZoneOver)}
+      data-testid="drop-remove-zone"
+      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverRemove(true); }}
+      onDragLeave={() => setOverRemove(false)}
+      onDrop={e => {
+        e.preventDefault();
+        setOverRemove(false);
+        const d = store.get().drag;
+        actions.setDrag(null);
+        if (!d) return;
+        // Focus lands on the emptied slot (spec 9), not on <body> where the removed card was.
+        if (isArcaneSlot(d.from)) actions.clearArcane(arcaneIndexOf(d.from));
+        else {
+          actions.removeWithUndo(d.from);
+          focusLater(slotFocusId(store.get().build, d.from));
+        }
+      }}
+    >
+      <DeleteRegular aria-hidden="true" style={{ fontSize: 24 }} />
+      <span>Drop here to remove {removeName}</span>
+    </div>
+  ) : null;
+
   return (
     <section
       className={styles.root}
-      style={{ paddingLeft: layout.gutter, paddingRight: layout.gutter, ...(scrollEl ? { flexShrink: 0, flexGrow: 0 } : {}) }}
-      data-pane="gallery"
-      data-testid="gallery"
-      aria-label="Mod gallery"
+      style={{ padding: `0 ${layout.gutter}px ${scrollEl ? layout.gutter : 0}px`, ...(scrollEl ? { flexShrink: 0, flexGrow: 0 } : {}) }}
+      data-pane="picker"
+      aria-label={open ? 'Choose a mod' : 'Why this DPS'}
     >
-      {/* Without core/images the context line says so (no banner: it would push the first card row away). */}
-      <GalleryHeader
-        view={cardsReady && !cardsReady.available ? { ...view, contextText: `Card images aren't installed: showing text cards. ${view.contextText}` } : view}
-        gallery={gallery}
-        compact={layout.compactHeight && !layout.stacked}
-        count={items.length}
-      />
-
-      <div
-        ref={setBodyEl}
-        className={mergeClasses(styles.body, scrollEl && styles.bodyStacked)}
-        {...(scrollEl ? {} : { 'data-scroll-region': '' })}
-        style={{ paddingTop: 4, paddingBottom: 8 }}
-      >
-        {messages}
-        {empty}
+      <PickerBar view={view} gallery={gallery} open={open} count={view.items.length} />
+      {open ? <TargetLine view={view} /> : null}
+      {open ? (
         <div
-          ref={el => { gridRef(el); gridEl.current = el; }}
-          className={styles.grid}
-          role="grid"
-          aria-label={isArcanes ? 'Arcanes' : view.tab === 'best' ? 'Best mods' : 'Mods'}
-          aria-rowcount={win.rows}
-          aria-colcount={columns}
-          style={{ height: Math.max(0, win.rows * rowH - GAP) }}
-          onKeyDown={onGridKey}
+          ref={el => { setBodyEl(el); bodyRef(el); }}
+          className={mergeClasses(styles.body, scrollEl && styles.bodyStacked)}
+          {...(scrollEl ? {} : { 'data-scroll-region': '' })}
+          style={{ paddingTop: 8, paddingBottom: scrollEl ? 0 : layout.gutter }}
+          data-testid="gallery"
+          id="picker-grid"
         >
-          {rows}
-        </div>
-        {dragFromSlot ? (
+          {messages}
+          {empty}
           <div
-            className={mergeClasses(styles.removeZone, overRemove && styles.removeZoneOver)}
-            data-testid="drop-remove-zone"
-            onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverRemove(true); }}
-            onDragLeave={() => setOverRemove(false)}
-            onDrop={e => {
-              e.preventDefault();
-              setOverRemove(false);
-              const d = store.get().drag;
-              actions.setDrag(null);
-              if (!d) return;
-              // Focus lands on the emptied slot (spec 9), not on <body> where the removed card was.
-              if (isArcaneSlot(d.from)) actions.clearArcane(arcaneIndexOf(d.from));
-              else {
-                actions.removeWithUndo(d.from);
-                focusLater(`slot-add-${d.from}`);
-              }
-            }}
+            ref={gridEl}
+            className={styles.grid}
+            role="grid"
+            aria-label={isArcanes ? 'Arcanes' : view.tab === 'best' ? 'Best mods' : 'Mods'}
+            aria-rowcount={win.rows}
+            aria-colcount={columns}
+            style={{ height: Math.max(0, win.rows * rowH - GAP) }}
+            onKeyDown={onGridKey}
           >
-            <DeleteRegular aria-hidden="true" style={{ fontSize: 24 }} />
-            <span>Drop here to remove {removeName}</span>
+            {rows}
           </div>
-        ) : null}
-      </div>
+          {removeZone}
+        </div>
+      ) : (
+        <div className={styles.rest}>
+          {children}
+          {removeZone}
+        </div>
+      )}
       {flyout && flyout.el?.isConnected ? (
         <Flyout
           target={flyout.el}
           bounds={bodyEl}
           label={`${flyout.item.name} details`}
-          onMouseEnter={() => clearTimeout(timers.current.close)}
-          onMouseLeave={() => closeFlyout(150)}
-          onClose={() => setFlyout(null)}
+          onMouseEnter={() => clearTimeout(timers.current.fly)}
+          onMouseLeave={e => { if (!flyout.el?.contains?.(e.relatedTarget)) { clearTimeout(timers.current.fly); timers.current.fly = setTimeout(closeFlyoutNow, 250); } }}
+          onClose={closeFlyoutNow}
         >
           {flyout.item.kind === 'mod' ? <ModDetails item={flyout.item} /> : <ArcaneDetails item={flyout.item} />}
         </Flyout>

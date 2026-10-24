@@ -82,7 +82,23 @@ export function useWindowFocused() {
   return useSyncExternalStore(subscribe, () => document.hasFocus());
 }
 
-export { CARD_RATIO, CHROME_HEIGHT, layoutFor, galleryHeaderHeight, slotSizeFor, gridWindow } from './layout.js';
+export { CARD_RATIO, layoutFor, slotSizeFor, gridWindow } from './layout.js';
+
+/** Width and height of an element (ResizeObserver), as a callback ref. */
+export function useElementSize() {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const observer = useRef(null);
+  const ref = useCallback(el => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!el) return;
+    const read = () => setSize(s => (s.width === el.clientWidth && s.height === el.clientHeight ? s : { width: el.clientWidth, height: el.clientHeight }));
+    read();
+    observer.current = new ResizeObserver(read);
+    observer.current.observe(el);
+  }, []);
+  return [ref, size];
+}
 
 /** Follow a scroll element's scroll position and height (for gridWindow). */
 export function useScrollState(el) {

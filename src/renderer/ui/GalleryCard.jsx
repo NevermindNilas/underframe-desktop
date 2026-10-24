@@ -1,16 +1,18 @@
 // One gallery card (docs/arsenal-spec.md 5.3): the full card image (or the text card), the state overlays
-// (equipped, gain, polarity-fit hint, honesty badges, the blocked reason plate) and drag start.
+// (equipped, gain, polarity-fit hint, honesty badges, the blocked reason plate) and drag start. A card image prints
+// its effect too small to read at gallery size, so the max-rank effect sits over that part of the art as real text
+// (docs/declutter-spec.md 1.1); the ⋯ on hover opens the details flyout.
 import { memo, useState } from 'react';
 import {
   Body1Strong, Caption1, Caption1Strong, makeStyles, mergeClasses, tokens,
 } from '@fluentui/react-components';
 import {
-  ArrowDownRegular, ArrowUpRegular, CheckmarkCircleFilled, InfoRegular, ProhibitedRegular, WarningRegular,
+  ArrowDownRegular, ArrowUpRegular, CheckmarkCircleFilled, CircleHalfFillRegular, InfoRegular, MoreHorizontalRegular, ProhibitedRegular,
 } from '@fluentui/react-icons';
 import { maxRank, modEffectSummary } from '../../shared/mods.js';
 import { slotDrain } from '../../shared/capacity.js';
 import { fmtSignedPct } from '../format.js';
-import { EXILUS_SLOT, isArcaneSlot, slotLabel } from '../model.js';
+import { EXILUS_SLOT, slotLabel } from '../model.js';
 import { ArtImage, OVERLAY, PolarityGlyph, RARITY_TOKEN, RankPips, imageFailed, polarityName } from './art.jsx';
 
 export const COMPAT_LABELS = {
@@ -92,10 +94,29 @@ const useStyles = makeStyles({
   arcaneArt: { position: 'absolute', left: 0, right: 0, top: 0, backgroundColor: tokens.colorNeutralBackground3 },
   arcanePlate: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: '2px', boxSizing: 'border-box' },
   arcaneName: { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '18px' },
-  arcaneLine: { color: tokens.colorNeutralForeground2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '15px', fontSize: '11px' },
+  arcaneLine: { color: tokens.colorNeutralForeground2, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '16px', fontSize: '12px' },
   // Overlays
   topLeft: { position: 'absolute', top: '4px', left: '4px', display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'flex-start', pointerEvents: 'none' },
-  topRight: { position: 'absolute', top: '4px', right: '4px', pointerEvents: 'none' },
+  topRight: { position: 'absolute', top: '4px', right: '4px', pointerEvents: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' },
+  // The card's label, readable: the name and the max-rank effect as real text over the lower half of the art, where
+  // the art prints them too small to read at gallery size. The picture and the frame's top stay visible above.
+  label: {
+    position: 'absolute', left: 0, right: 0, top: '41%', bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
+    justifyContent: 'center', gap: '2px', padding: '12px 6px 6px', boxSizing: 'border-box', pointerEvents: 'none', textAlign: 'center', overflow: 'hidden',
+    backgroundImage: 'linear-gradient(to bottom, rgba(14,16,20,0) 0px, rgba(14,16,20,0.95) 10px, rgba(14,16,20,0.97) 100%)',
+    color: OVERLAY.neutral,
+  },
+  labelName: { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: '13px', lineHeight: '16px', fontWeight: tokens.fontWeightSemibold, color: 'inherit' },
+  effectText: { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: '12px', lineHeight: '16px', color: 'rgba(255,255,255,0.86)' },
+  info: {
+    position: 'absolute', top: '4px', right: '4px', width: '24px', height: '24px', minWidth: '24px', padding: 0, margin: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: OVERLAY.scrim, color: OVERLAY.neutral, cursor: 'pointer', fontSize: '16px',
+    ':hover': { backgroundColor: 'rgba(0,0,0,0.9)' },
+    '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'ButtonFace', color: 'ButtonText', border: '1px solid ButtonText' },
+  },
+  // With the ⓘ shown, the fit hint moves down beside it.
+  topRightShifted: { top: '32px' },
   pill: {
     display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '1px 6px', borderRadius: tokens.borderRadiusMedium,
     backgroundColor: OVERLAY.scrim, color: OVERLAY.neutral, fontVariantNumeric: 'tabular-nums', border: '1px solid transparent',
@@ -103,11 +124,15 @@ const useStyles = makeStyles({
   },
   gainUp: { color: OVERLAY.match },
   gainDown: { color: OVERLAY.mismatch },
-  match: { color: OVERLAY.match, borderColor: OVERLAY.match, borderStyle: 'solid' },
+  // A matching polarity is the normal case: neutral, the arrow says it. Only a mismatch is coloured.
+  match: { color: OVERLAY.neutral },
   mismatch: { color: OVERLAY.mismatch, borderColor: OVERLAY.mismatch, borderStyle: 'dashed' },
-  icon: { width: '20px', height: '20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: tokens.borderRadiusMedium },
-  warnIcon: { backgroundColor: tokens.colorPaletteYellowBackground3, color: '#000' },
-  infoIcon: { backgroundColor: tokens.colorBrandBackground, color: tokens.colorNeutralForegroundOnBrand },
+  // Honesty on a card: a neutral glyph on the scrim (docs/declutter-spec.md 3); the card's name says what it means.
+  icon: {
+    width: '20px', height: '20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: OVERLAY.scrim, color: OVERLAY.neutral,
+    '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', border: '1px solid CanvasText' },
+  },
   reason: {
     position: 'absolute', left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 8px',
     backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground1,
@@ -154,9 +179,10 @@ export function cardLabel(item, { partial = [], engineOnly = false } = {}) {
  * Handlers come from the grid (activation, keys, drag, hover for the flyout).
  */
 export const GalleryCard = memo(function GalleryCard({
-  item, width, height, textCards, imageUrl, fit, partial, engineOnly, tabIndex, flash, handlers, index,
+  item, width, height, textCards, imageUrl, fit, partial, engineOnly, tabIndex, flash, handlers, index, onDetails = null,
 }) {
   const styles = useStyles();
+  const [hover, setHover] = useState(false);
   const blocked = item.state === 'blocked';
   const label = cardLabel(item, { partial, engineOnly });
   const isMod = item.kind === 'mod';
@@ -171,6 +197,8 @@ export const GalleryCard = memo(function GalleryCard({
     <div
       className={mergeClasses(styles.card, styles.cardFocus, item.state === 'equipped' && styles.equipped, flash && styles.flash)}
       style={{ width, height }}
+      onMouseEnter={onDetails ? () => setHover(true) : undefined}
+      onMouseLeave={onDetails ? () => setHover(false) : undefined}
     >
       {isMod ? (
         <>
@@ -187,6 +215,13 @@ export const GalleryCard = memo(function GalleryCard({
             </span>
           </span>
           {showImage ? <span className={mergeClasses(styles.art, blocked && styles.dim)}><ArtImage src={imageUrl} lazy fit="cover" backdrop={tokens.colorNeutralBackground2} /></span> : null}
+          {showImage && !blocked ? (
+            <span className={styles.label} aria-hidden="true" data-testid="card-effect">
+              <span className={styles.labelName}>{item.name}</span>
+              {/* A name that wraps leaves room for two lines of effect, else three (the label never overflows). */}
+              <span className={styles.effectText} style={item.name.length * 7.2 > width - 12 ? { WebkitLineClamp: 2 } : undefined}>{modEffectSummary(item.mod, maxRank(item.mod)) || String(item.mod.Description ?? '').replace(/\r?\n/g, ' ')}</span>
+            </span>
+          ) : null}
         </>
       ) : arcaneArt ? (
         <>
@@ -211,18 +246,16 @@ export const GalleryCard = memo(function GalleryCard({
       )}
       <span className={styles.topLeft} aria-hidden="true">
         {item.place && item.place <= 3 ? <span className={mergeClasses(styles.pill, styles.place)}>#{item.place}</span> : null}
-        {item.state === 'equipped' ? (
-          <span className={styles.pill}><CheckmarkCircleFilled /> {isArcaneSlot(item.slot) ? 'Equipped' : item.slot === EXILUS_SLOT ? 'Exilus' : `Slot ${item.slot + 1}`}</span>
-        ) : null}
+        {item.state === 'equipped' ? <span className={styles.pill}><CheckmarkCircleFilled /></span> : null}
         {item.kind === 'mod' && !blocked && (partial?.length || engineOnly) ? (
           <span style={{ display: 'flex', gap: 2 }}>
-            {partial?.length ? <span className={mergeClasses(styles.icon, styles.warnIcon)}><WarningRegular /></span> : null}
-            {engineOnly ? <span className={mergeClasses(styles.icon, styles.infoIcon)}><InfoRegular /></span> : null}
+            {partial?.length ? <span className={styles.icon}><CircleHalfFillRegular /></span> : null}
+            {engineOnly ? <span className={styles.icon}><InfoRegular /></span> : null}
           </span>
         ) : null}
         {item.kind === 'arcane' && item.arcane.support !== 'full' && !blocked ? (
-          <span className={mergeClasses(styles.icon, item.arcane.support === 'none' ? styles.infoIcon : styles.warnIcon)}>
-            {item.arcane.support === 'none' ? <InfoRegular /> : <WarningRegular />}
+          <span className={styles.icon}>
+            {item.arcane.support === 'none' ? <InfoRegular /> : <CircleHalfFillRegular />}
           </span>
         ) : null}
         {Number.isFinite(item.gain) && Math.abs(item.gain) >= 0.0005 ? (
@@ -231,8 +264,9 @@ export const GalleryCard = memo(function GalleryCard({
           </span>
         ) : null}
       </span>
-      {fit && !blocked && fit.effect !== 'neutral' ? (
-        <span className={styles.topRight} aria-hidden="true">
+      {/* The drain hint gives way to a DPS gain (Best for slot N): two pills would collide on a narrow card. */}
+      {fit && !blocked && fit.effect !== 'neutral' && !Number.isFinite(item.gain) ? (
+        <span className={mergeClasses(styles.topRight, hover && onDetails && styles.topRightShifted)} aria-hidden="true">
           <span className={mergeClasses(styles.pill, fit.effect === 'match' ? styles.match : styles.mismatch)}>
             {fit.effect === 'match' ? <ArrowDownRegular /> : <ArrowUpRegular />}{fit.drain}
           </span>
@@ -260,6 +294,19 @@ export const GalleryCard = memo(function GalleryCard({
         draggable={!blocked}
         {...handlers}
       />
+      {hover && onDetails ? (
+        <button
+          type="button"
+          className={styles.info}
+          tabIndex={-1}
+          aria-label={`${item.name} details (Alt+Enter)`}
+          title="Details (Alt+Enter)"
+          data-testid="card-details"
+          onClick={e => { e.stopPropagation(); onDetails(e.currentTarget.parentElement); }}
+        >
+          <MoreHorizontalRegular aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
   );
 });

@@ -1,5 +1,7 @@
 # Underframe Desktop: Fluent 2 redesign spec
 
+> **Partly superseded (2026-10-24).** The window layout and the results presentation are replaced by [declutter-spec.md](declutter-spec.md) (Loadout | Readout, the Picker on demand, one 48 px top bar, no status bar). Sections marked "Superseded" below no longer describe the app; the rest still applies.
+
 Status: binding spec for the React 19 + Fluent UI React v9 rewrite of `src/renderer`. Reviewers check the build against section 8.
 
 Component names are checked against the published packages: `@fluentui/react-components` 9.74.11, `@fluentui/react-charts` 9.3.29 and `@fluentui/react-icons` 2.0.344 (every component, hook and icon named here is exported by those versions). Tokens such as `colorNeutralBackground1` are the v9 `tokens` names.
@@ -37,6 +39,8 @@ Component names are checked against the published packages: `@fluentui/react-com
 
 ### 2.1 Regions
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): three regions: top bar, Loadout and Readout (spec 1).
+
 ```
 +------------------------------------------------------------------------------------+
 | [=] [UF] Underframe Desktop  ·  Braton Prime build • Unsaved           [_][□][X]  | title bar 48
@@ -64,6 +68,8 @@ Component names are checked against the published packages: `@fluentui/react-com
 
 ### 2.2 Sizes and breakpoints (window width, not screen)
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): see spec 2.
+
 | Width | Library pane | Results column | Mod grid | Gutter |
 | --- | --- | --- | --- | --- |
 | >= 1680 (e.g. 1920x1080) | inline, 300 px, open | 440 px | 4 columns | 24 px |
@@ -78,6 +84,8 @@ Component names are checked against the published packages: `@fluentui/react-com
 - Under 800 px of window height the compare drawer sits under the editor column only, so it never squeezes the results column.
 
 ### 2.3 Scrolling rules (no scroll traps)
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): at rest nothing scrolls at 1440x900; while picking only the card grid does (spec 7).
 
 - Exactly these scroll containers exist: library list, editor column, results tab panel, compare grid body, mod picker list, mod picker detail. They are **siblings, never nested**. The window itself never scrolls.
 - The result card, build toolbar, title bar and status bar never scroll.
@@ -112,6 +120,8 @@ There is one primary (accent) button per region at most: Save in the toolbar, Eq
 - Keep `show: false` + `ready-to-show`, so no white flash before the first paint.
 
 ### 3.2 Title bar
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the title bar and the build toolbar are one 48 px top bar (spec 1).
 
 - Height 48 px (WinUI tall title bar, needed because it contains the pane toggle). Contents from left: `Hamburger` (16 px from the edge, toggles the library pane, tooltip "Show builds (Ctrl+B)" / "Hide builds (Ctrl+B)"), app icon 16 px, "Underframe Desktop" in `Caption1`, a separator dot, then the build name and save state in `Caption1` (for example "Braton Prime build • Unsaved changes"), truncated with an ellipsis.
 - No global search in v1: the weapon `Combobox` and the mod picker are the search surfaces, and a second search box would duplicate them. The title bar has no other interactive controls.
@@ -173,6 +183,8 @@ Header (does not scroll): `TabList size="small"` with tabs "My builds" and "Feat
 | Disabled | Menu items Duplicate/Delete are disabled while a save of that build is in flight (`disabledFocusable`, tooltip "Saving…") | n/a |
 
 ### 4.3 Build toolbar (top of the workspace)
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): merged into the top bar; the save state shows only "Unsaved", "Edited" or "Saving…" (spec 1).
 
 `Toolbar` (`aria-label="Build"`), single row, 56 px:
 - **Build name**: `Input appearance="underline"` styled as `Subtitle1`, with label "Build name" (visually hidden), `maxLength` 120. An empty name saves as "Untitled build".
@@ -258,6 +270,8 @@ Layout: `DialogSurface` width `min(1040px, 92vw)`, height `min(760px, 88vh)`.
 
 ### 4.8 Target
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the target form is a popover from the Readout's target line (Change, Ctrl+T).
+
 A `Card` with the header "Target" and a summary `Caption1` in the header ("Elite Crewman · Level 145 · Corpus · Steel Path"), placed after the mods in the editor. The result card repeats the summary with a "Change" `Link` that scrolls the target card into view and focuses Enemy.
 
 - **Enemy**: `Combobox` with an `OptionGroup` per faction (plus a first group "Custom target" with one option "Custom"). Options show the name and `Caption1` "Default level 145". `useComboboxFilter`.
@@ -275,6 +289,8 @@ A `Card` with the header "Target" and a summary `Caption1` in the header ("Elite
 | Disabled | Level and Steel Path for Custom, as above |
 
 ### 4.9 Result card (always visible)
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the Readout hero: DPS with the delta as text, TTK; range, runs and hits in Run details; Run again and simulated time in its menu (spec 4).
 
 Top of the results column. A `Card` that never scrolls:
 
@@ -303,6 +319,8 @@ vs Elite Crewman · L145 · Corpus  Change
 
 ### 4.10 Results tabs: Charts, Stats, Best mod
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the stats are always in the Readout; charts and notes are Why this DPS in the Loadout at rest (spec 1.1).
+
 `TabList` under the result card: **Charts** | **Stats** | **Best mod** (the Best mod tab appears only when a sweep exists; while running it shows "Best mod 12/85"). The selected tab persists. The panel below is the column's only scroll container.
 
 **Charts**
@@ -330,6 +348,8 @@ vs Elite Crewman · L145 · Corpus  Change
 
 ### 4.11 Compare drawer
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): Compare is a Readout section with Pin and Expand; Expand opens a dialog with stat columns (spec 4).
+
 `InlineDrawer position="bottom"` inside the workspace, height `clamp(200px, 32vh, 360px)`. It opens with the toolbar Compare toggle or Ctrl+J; its open state persists.
 - `DrawerHeader` with `DrawerHeaderTitle` "Compare" and actions "Clear all" (with an Undo toast) and close.
 - `DataGrid` with `sortable` columns: Build, Changes (what differs from the baseline pin, e.g. "Serration R10→R0, Steel Path on"), Weapon, Mode, Target, Avg DPS, vs baseline, TTK, and an actions column. Below 900 px of grid width, weapon and mode move under the build name. "vs baseline" uses the delta badge style. The baseline is the first pin by default; the row `Menu` offers "Use as baseline" and "Remove". The baseline row shows a `Badge` "Baseline". Numeric columns are right-aligned and use tabular numerals.
@@ -338,9 +358,13 @@ vs Elite Crewman · L145 · Corpus  Change
 
 ### 4.12 Notes
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): Notes is a tab of Why this DPS.
+
 `Card` "Notes" with an auto-growing `Textarea` (resize vertical, max 10,000 chars, counter shown above 9,000). Featured builds put their description here. It is part of the build snapshot (dirty tracking and undo). **Empty**: placeholder "Add notes about this build, like the rotation or which enemies it's for."
 
 ### 4.13 Status bar, About, shortcuts
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): there is no status bar: the credit line is the Readout's last line; versions and Discord are in About and the top bar More menu.
 
 - **Status bar** (28 px, `Caption1`, Mica): left, the exact credit text "Damage engine and game data by Underframe (underframe.site), used with permission. Not affiliated with Digital Extremes." with `underframe.site` as a `Link` (opens externally). Right, inside `Overflow` so items collapse into a "More" menu at narrow widths: "Data 5919d50 · Oct 24, 2026" (short hash; full hash and fetch time in a `Tooltip`), "App 0.1.0", the outdated `Badge` (4.1), `Link` "Discord", `Button appearance="transparent"` "About". The credit text never truncates; it wraps to 2 lines only below 1100 px.
 - **About** `Dialog`: app name and version, Electron/Chrome versions, data version and fetch date, the credits above, "Code licensed AGPL-3.0-only; Underframe engine and data are proprietary and used with permission.", known limits (guns only; no arcanes, rivens, conditional mods, incarnon bonuses), and links. Action: "Close".
@@ -417,6 +441,8 @@ They appear in tooltips ("Save (Ctrl+S)"), in menu items (`MenuItem secondaryCon
 - Re-renders must not steal or drop focus (React keys stable by slot index or build id).
 
 ### 5.7 Honest accuracy indicators
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): honesty is a neutral line with a Details popover in the Readout and a neutral glyph on slots and cards (spec 3-4), never a coloured badge.
 
 - "Partially simulated" on slot cards, in the picker and in the result card (aggregate, with a `Popover` listing the mods and unmodelled stats).
 - "Engine-only" on slot cards and in the picker.

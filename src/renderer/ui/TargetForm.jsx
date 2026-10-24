@@ -1,7 +1,8 @@
-// Target card: enemy preset (or Custom), level, faction, Steel Path, headshots, and the enemy's pools.
+// The target form (Readout › Change, Ctrl+T: docs/declutter-spec.md 4): enemy preset (or Custom), level, faction,
+// Steel Path, headshots, and the enemy pools.
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Accordion, AccordionHeader, AccordionItem, AccordionPanel, Body1Strong, Caption1, Card, CardHeader, Combobox, Dropdown,
+  Accordion, AccordionHeader, AccordionItem, AccordionPanel, Body1Strong, Caption1, Combobox, Dropdown,
   Field, Option, OptionGroup, SpinButton, Subtitle2, Switch, makeStyles, tokens,
 } from '@fluentui/react-components';
 import { actions } from '../controller.js';
@@ -15,11 +16,14 @@ import { POOL_LABELS, POOL_TOKENS } from '../theme.js';
 const POOLS = ['hp', 'shields', 'armor', 'overguard'];
 
 const useStyles = makeStyles({
-  card: { gap: tokens.spacingVerticalM, scrollMarginTop: '16px' },
+  card: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
   summary: { color: tokens.colorNeutralForeground2 },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    '& .fui-Dropdown': { minWidth: 0, width: '100%' },
+    '& .fui-Combobox': { minWidth: 0, width: '100%' },
+    '& .fui-SpinButton': { minWidth: 0, width: '100%' },
     gap: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
     alignItems: 'start',
   },
@@ -141,14 +145,7 @@ function NumberField({ label, value, min, max, stepPage, onCommit, disabled, hin
   );
 }
 
-/** Card chrome around the target fields, or a plain region inside the results rail's Target tab. */
-function Shell({ bare, className, children }) {
-  return bare
-    ? <div className={className} id="target-card" data-testid="target-card" style={{ display: 'flex', flexDirection: 'column' }}>{children}</div>
-    : <Card appearance="filled" className={className} id="target-card" data-testid="target-card">{children}</Card>;
-}
-
-export function TargetCard({ bare = false }) {
+export function TargetForm() {
   const styles = useStyles();
   const ctx = useApp(s => s.ctx);
   const enemyCfg = useApp(s => s.build.enemy);
@@ -159,11 +156,11 @@ export function TargetCard({ bare = false }) {
   const statsSummary = `${fmtInt(enemy.hp)} health · ${fmtInt(enemy.shields)} shields · ${fmtInt(enemy.armor)} armor${enemy.overguard ? ` · ${fmtInt(enemy.overguard)} overguard` : ''}`;
 
   return (
-    <Shell bare={bare} className={styles.card}>
-      <CardHeader
-        header={<Subtitle2 as="h2">Target</Subtitle2>}
-        description={<Caption1 className={styles.summary}>{targetSummary(enemyCfg)}</Caption1>}
-      />
+    <div className={styles.card} id="target-card" data-testid="target-card">
+      <div>
+        <Subtitle2 as="h2" style={{ display: 'block' }}>Target</Subtitle2>
+        <Caption1 className={styles.summary}>{targetSummary(enemyCfg)}</Caption1>
+      </div>
       <div className={styles.grid}>
         <EnemyField />
         <NumberField
@@ -223,7 +220,7 @@ export function TargetCard({ bare = false }) {
           </AccordionPanel>
         </AccordionItem>
       </Accordion>
-    </Shell>
+    </div>
   );
 }
 

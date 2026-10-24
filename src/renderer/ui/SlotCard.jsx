@@ -1,15 +1,17 @@
-// Arsenal slot cards (docs/arsenal-spec.md 4.5-4.7): the compact card image of the equipped mod with our overlays
-// (rarity frame, drain + polarity plate, rank pips, hover/focus actions), the empty, Exilus and arcane states, and
-// the drop-target feedback for drag and drop and keyboard pick-up. Text cards stand in when an image is missing.
+// Arsenal slot cards (docs/arsenal-spec.md 4.5-4.7, calmed by docs/declutter-spec.md 3): the compact card image of
+// the equipped mod with at most a drain + polarity plate (neutral when the polarity matches, red only when it
+// doesn't), the rank as shadowed text only below max, and a neutral honesty glyph; the hover/focus action strip; the
+// empty, Exilus and arcane states (the arcane's stacks as plain text under the dome); and the drop-target feedback
+// for drag and drop and keyboard pick-up. Text cards stand in when an image is missing.
 import { useState } from 'react';
 import {
-  Badge, Body1Strong, Button, Caption1, Caption1Strong, Field, InfoLabel, Menu, MenuDivider, MenuGroup, MenuGroupHeader,
+  Body1Strong, Button, Caption1, Caption1Strong, Field, Menu, MenuDivider, MenuGroup, MenuGroupHeader,
   MenuItem, MenuItemRadio, MenuList, MenuPopover, MenuTrigger, Popover, PopoverSurface, PopoverTrigger, ProgressBar,
   SpinButton, Tooltip, makeStyles, mergeClasses, tokens,
 } from '@fluentui/react-components';
 import {
-  AddRegular, ArrowDownRegular, ArrowSwapRegular, ArrowUpRegular, DeleteRegular, DiamondRegular, DismissRegular, InfoRegular,
-  MoreHorizontalRegular, ProhibitedRegular, SparkleRegular, SubtractRegular, WarningRegular,
+  AddRegular, ArrowDownRegular, ArrowSwapRegular, ArrowUpRegular, CircleHalfFillRegular, DeleteRegular, DiamondRegular, DismissRegular,
+  InfoRegular, MoreHorizontalRegular, ProhibitedRegular, SparkleRegular, SubtractRegular,
 } from '@fluentui/react-icons';
 import { actions, announce, focusLater, store } from '../controller.js';
 
@@ -21,7 +23,7 @@ import { arcaneControls, arcaneMaxRank, arcaneStacksText, arcaneSummary, arcaneS
 import { modRarityFrame } from '../../shared/card-assets.js';
 import { ARCANE_MIME, MOD_MIME, dropInfo } from '../dnd.js';
 import { hasNoStats } from './common.jsx';
-import { ArtImage, OVERLAY, PolarityGlyph, RARITY_TOKEN, RankPips, polarityName, useCards, useTextCards } from './art.jsx';
+import { ArtImage, OVERLAY, PolarityGlyph, RARITY_TOKEN, polarityName, useCards, useTextCards } from './art.jsx';
 
 const RARITY_OF_FRAME = { Bronze: 'common', Silver: 'uncommon', Gold: 'rare', Legendary: 'legendary', Riven: 'legendary' };
 const BUSY_TIP = 'A best-mod search is running for this slot';
@@ -30,9 +32,9 @@ const MATCH_TEXT = { match: 'matches polarity', mismatch: "doesn't match polarit
 // The arch of an arcane: a half-ellipse over a flat base, in the proportions of the arcane art (464x340).
 const DOME_RADIUS = '50% 50% 6px 6px / 100% 100% 6px 6px';
 const ARCANE_ASPECT = 464 / 340;
-// Room under the dome; the rank pill also overlaps the art's flat base by a few pixels, so a filled dome is as big
-// as an empty one.
-const PILL_ROOM = 12;
+// Room under the dome for one line of plain text (rank below max, stacks); the hover pill overlaps the art's flat base
+// a little, so a filled dome is as big as an empty one.
+const PILL_ROOM = 18;
 
 const useStyles = makeStyles({
   root: {
@@ -108,17 +110,6 @@ const useStyles = makeStyles({
     outlineOffset: '2px',
     '@media (forced-colors: active)': { outlineColor: 'Highlight' },
   },
-  slotPol: {
-    position: 'absolute',
-    top: '6px',
-    left: '6px',
-    display: 'inline-flex',
-    padding: '2px',
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: OVERLAY.scrim,
-    color: OVERLAY.neutral,
-    pointerEvents: 'none',
-  },
   plate: {
     position: 'absolute',
     top: '6px',
@@ -133,18 +124,27 @@ const useStyles = makeStyles({
     border: '1px solid transparent',
     '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText' },
   },
-  plateMatch: { color: OVERLAY.match, borderColor: OVERLAY.match, borderStyle: 'solid', '@media (forced-colors: active)': { borderColor: 'CanvasText', color: 'CanvasText' } },
+  // A matching polarity is the normal case, so it stays neutral (the ↓ says it); colour is kept for the exception.
+  plateMatch: { color: OVERLAY.neutral, '@media (forced-colors: active)': { borderColor: 'CanvasText', borderStyle: 'solid', color: 'CanvasText' } },
   plateMismatch: { color: OVERLAY.mismatch, borderColor: OVERLAY.mismatch, borderStyle: 'dashed', '@media (forced-colors: active)': { borderColor: 'CanvasText', color: 'CanvasText' } },
   plateNeutral: { color: OVERLAY.neutral },
-  arrow: { fontSize: '10px' },
-  // In the top row between the slot polarity glyph and the drain plate: the card art prints the mod's name below
-  // that row, and a text card's name starts under it too.
-  badges: { position: 'absolute', left: '6px', top: '4px', display: 'flex', gap: '2px' },
-  badgesAfterPol: { left: '28px' },
-  badgeButton: {
-    minWidth: '20px', width: '20px', height: '20px', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    border: 'none', borderRadius: tokens.borderRadiusMedium, cursor: 'pointer', background: 'none',
-    ':focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}` },
+  // Short strip slots (picking at 1100 px): plates hug the corners so the name on the art stays readable.
+  plateCompact: { top: '2px', right: '2px', padding: '0 4px' },
+  cornerCompact: { top: '2px', left: '2px', width: '18px', height: '18px', fontSize: '12px' },
+  arrow: { fontSize: '12px' },
+  // Top left, across from the drain plate: the card art prints the mod's name below that row. A neutral glyph, not
+  // a coloured badge (docs/declutter-spec.md 3); the Readout's honesty line has the details.
+  honesty: {
+    position: 'absolute', left: '6px', top: '6px', width: '20px', height: '20px', display: 'inline-flex', alignItems: 'center',
+    justifyContent: 'center', borderRadius: tokens.borderRadiusMedium, backgroundColor: OVERLAY.scrim, color: OVERLAY.neutral,
+    pointerEvents: 'none', fontSize: '14px',
+    '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', border: '1px solid CanvasText' },
+  },
+  // At rest the rank shows only below max ("3/5"), as shadowed text on the art (no plate); −/+ come with the hover strip.
+  rankPlate: {
+    position: 'absolute', right: '12px', bottom: '14%', pointerEvents: 'none', lineHeight: '16px',
+    textShadow: '0 0 2px #000, 0 0 4px #000, 0 1px 3px #000',
+    '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', textShadow: 'none', padding: '0 4px' },
   },
   strip: {
     position: 'absolute',
@@ -168,7 +168,6 @@ const useStyles = makeStyles({
   // even on 10-rank mods in a 150 px slot.
   stripActive: { justifyContent: 'space-between', height: '28px', pointerEvents: 'auto', gap: '2px' },
   rankText: { color: OVERLAY.neutral, fontVariantNumeric: 'tabular-nums', '@media (forced-colors: active)': { color: 'CanvasText' } },
-  center: { display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0 },
   actionGroup: { display: 'inline-flex', alignItems: 'center', gap: '2px' },
   action: {
     minWidth: '24px',
@@ -246,7 +245,6 @@ const useStyles = makeStyles({
     pointerEvents: 'none',
     textAlign: 'center',
   },
-  caption: { color: tokens.colorNeutralForeground2, display: 'flex', alignItems: 'center', gap: '2px', height: '20px' },
   // Projected drain while dragging: the plate shows what the dragged mod would cost here, with a dotted outline
   // so it doesn't read as the equipped mod's own drain.
   plateProjected: { borderStyle: 'dotted', opacity: 1 },
@@ -314,11 +312,18 @@ const useStyles = makeStyles({
     '@media (forced-colors: active)': { forcedColorAdjust: 'none', backgroundColor: 'Canvas', color: 'CanvasText', border: '1px solid CanvasText' },
   },
   pillActive: { height: '26px', borderRadius: '13px', padding: '0 2px', gap: '2px', pointerEvents: 'auto' },
-  arcaneCaption: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  stacks: { position: 'absolute', right: 0, top: 0, maxWidth: '45%' },
+  // Under the dome: the rank below max and the stacks, as plain text (docs/declutter-spec.md 3); the stacks open
+  // their popover.
+  under: {
+    position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', maxWidth: '100%', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', gap: '4px', color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap', minHeight: '18px',
+  },
+  stacksText: { color: 'inherit', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '18px' },
   stacksButton: {
-    border: 'none', padding: 0, background: 'none', cursor: 'pointer', borderRadius: tokens.borderRadiusMedium, minHeight: '24px',
-    display: 'inline-flex', alignItems: 'center', maxWidth: '100%',
+    border: 'none', padding: '0 4px', background: 'none', cursor: 'pointer', borderRadius: tokens.borderRadiusMedium, minHeight: '24px',
+    display: 'inline-flex', alignItems: 'center', gap: '4px', maxWidth: '100%', color: tokens.colorNeutralForeground2, fontFamily: 'inherit',
+    marginBottom: '-3px',
+    ':hover': { color: tokens.colorNeutralForeground1, textDecorationLine: 'underline' },
     ':focus-visible': { outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}` },
   },
   popover: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS, maxWidth: '300px' },
@@ -346,7 +351,8 @@ function onSlotKeys(e, { slot, value, max, selected, kind = 'mod' }) {
     if (e.key === 'Delete' && Number.isInteger(pickup.from)) { e.preventDefault(); actions.removePickup(); return true; }
     return false;
   }
-  if (e.key === ' ' && selected && value) {
+  // Space picks a filled slot's card up (arrows move it, Space or Enter drops it); Enter opens the Picker for it.
+  if (e.key === ' ' && value) {
     e.preventDefault();
     actions.startPickup({ kind, name: value.name, from: slot, target: slot });
     return true;
@@ -434,7 +440,7 @@ function dragClass(styles, info, over) {
   return info.effect === 'match' ? styles.acceptMatch : info.effect === 'mismatch' ? styles.acceptMismatch : styles.accept;
 }
 
-function DrainPlate({ slot, drain, effect, base, polarity, modPolarity, testId = true, projected = null }) {
+function DrainPlate({ slot, drain, effect, base, polarity, modPolarity, testId = true, projected = null, compact = false }) {
   const styles = useStyles();
   const polName = polarityName(polarity);
   const tip = projected ? `${projected} would drain ${drain} here${effect === 'match' ? ' (matching polarity)' : effect === 'mismatch' ? " (polarity doesn't match)" : ''}`
@@ -446,7 +452,7 @@ function DrainPlate({ slot, drain, effect, base, polarity, modPolarity, testId =
   return (
     <Tooltip content={tip} relationship="description" positioning="above-end">
       <span
-        className={mergeClasses(styles.plate, effect === 'match' ? styles.plateMatch : effect === 'mismatch' ? styles.plateMismatch : styles.plateNeutral, projected && styles.plateProjected)}
+        className={mergeClasses(styles.plate, effect === 'match' ? styles.plateMatch : effect === 'mismatch' ? styles.plateMismatch : styles.plateNeutral, projected && styles.plateProjected, compact && styles.plateCompact)}
         data-testid={testId ? `slot-drain-${slot}` : undefined}
         data-match={effect}
         data-projected={projected ? '' : undefined}
@@ -461,26 +467,22 @@ function DrainPlate({ slot, drain, effect, base, polarity, modPolarity, testId =
   );
 }
 
-function HonestyBadges({ partial, noStats, name, afterPolarity = false }) {
+/** Honesty on a slot: one neutral glyph; what it means is in the slot's description and the Readout's honesty line. */
+function HonestyGlyph({ partial, noStats, compact = false }) {
   const styles = useStyles();
   if (!partial.length && !noStats) return null;
-  const badge = (label, color, icon, text) => (
-    <Popover withArrow positioning="above">
-      <PopoverTrigger disableButtonEnhancement>
-        <button type="button" className={styles.badgeButton} aria-label={`${label}: ${name}. Show details`} tabIndex={-1}>
-          <Badge appearance="filled" color={color} size="small" icon={icon} />
-        </button>
-      </PopoverTrigger>
-      <PopoverSurface style={{ maxWidth: 300 }}><Caption1>{text}</Caption1></PopoverSurface>
-    </Popover>
-  );
   return (
-    <span className={mergeClasses(styles.badges, afterPolarity && styles.badgesAfterPol)}>
-      {partial.length ? badge('Partially simulated', 'warning', <WarningRegular />, `Not modelled: ${partial.join(', ')}. Results for this build may be off.`) : null}
-      {noStats ? badge('Engine-only', 'informative', <InfoRegular />, 'This mod has no numeric stats in the data. Its effect counts only if the Underframe engine models it itself.') : null}
+    <span className={mergeClasses(styles.honesty, compact && styles.cornerCompact)} aria-hidden="true" data-testid="slot-honesty">
+      {partial.length ? <CircleHalfFillRegular /> : <InfoRegular />}
     </span>
   );
 }
+
+/** Spoken honesty note for a slot's description. */
+const honestyText = (partial, noStats) => [
+  partial.length ? `Partially simulated: ${partial.join(', ')} not modelled` : null,
+  noStats ? 'Engine-only: no numeric stats in the data' : null,
+].filter(Boolean).join('. ');
 
 function PolarityMenuItems({ slot }) {
   const innate = useDerived().capacity?.innate?.[slot] ?? null;
@@ -532,6 +534,7 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
   const ctx = useApp(s => s.ctx);
   const value = useApp(s => s.build?.mods[slot] ?? null);
   const selected = useApp(s => s.selectedSlot === slot);
+  const picking = useApp(s => s.pickerOpen);
   const pickup = useApp(s => s.pickup);
   const cards = useCards();
   const textCards = useTextCards();
@@ -599,7 +602,7 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
         {info?.accept && info.drain != null ? (
           <DrainPlate slot={slot} drain={info.drain} effect={info.effect} base={info.drain} polarity={polarity} modPolarity={ctx.index.byName.get(active.name)?.Polarity} projected={active.name} />
         ) : null}
-        {(hover || focusWithin || selected) && !here && !active ? (
+        {(hover || focusWithin) && !(picking && selected) && !here && !active ? (
           <SlotMenu
             slot={slot}
             value={null}
@@ -625,7 +628,9 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
   const partial = partialMap.get(value.name) ?? [];
   const noStats = hasNoStats(ctx, value.name);
   const imageUrl = !textCards ? cards?.modCompactUrl(value.name) : null;
-  const showActions = (hover || focusWithin || selected) && !here && !active;
+  // The target slot of the Picker shows just its ring and name: its actions would cover the name of the mod being
+  // replaced in the small strip slot.
+  const showActions = (hover || focusWithin) && !(picking && selected) && !here && !active;
   // While a mod is dragged or picked up, every slot that accepts it shows what it would drain there (spec 6.2).
   const shownDrain = info && info.accept && info.drain != null && active?.from !== slot ? info : null;
   const accName = `${label}${polarityPart}: ${value.name}, rank ${value.rank} of ${max}, drain ${d.drain}${MATCH_TEXT[d.effect] ? `, ${MATCH_TEXT[d.effect]}` : ''}`;
@@ -664,9 +669,9 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
           if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') { e.preventDefault(); setMenuOpen(true); }
         }}
       />
-      <span id={descId} hidden>{`${effect}${selected ? '. Selected' : ''}`}</span>
-      <span className={styles.frame} style={{ boxShadow: `inset 0 0 0 2px ${RARITY_TOKEN[rarity]}` }} aria-hidden="true" />
-      {polarity ? <span className={styles.slotPol} aria-hidden="true"><PolarityGlyph code={polarity} size={14} /></span> : null}
+      <span id={descId} hidden>{[effect, honestyText(partial, noStats), selected ? 'Selected' : ''].filter(Boolean).join('. ')}</span>
+      {/* The card art carries its own rarity frame; only a text card gets ours. */}
+      {imageUrl ? null : <span className={styles.frame} style={{ boxShadow: `inset 0 0 0 2px ${RARITY_TOKEN[rarity]}` }} aria-hidden="true" />}
       <DrainPlate
         slot={slot}
         drain={shownDrain ? shownDrain.drain : d.drain}
@@ -675,8 +680,9 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
         polarity={polarity}
         modPolarity={shownDrain ? ctx.index.byName.get(active.name)?.Polarity : mod?.Polarity}
         projected={shownDrain ? active.name : null}
+        compact={height < 70}
       />
-      <HonestyBadges partial={partial} noStats={noStats} name={value.name} afterPolarity={Boolean(polarity)} />
+      <HonestyGlyph partial={partial} noStats={noStats} compact={height < 70} />
       {showActions ? (
         <SlotMenu
           slot={slot}
@@ -692,8 +698,8 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
       ) : menuOpen ? (
         <SlotMenu slot={slot} value={value} open={menuOpen} setOpen={setMenuOpen} here={here} running={running} trigger={<span />} />
       ) : null}
-      <div className={mergeClasses(styles.strip, showActions && styles.stripActive)}>
-        {showActions ? (
+      {showActions ? (
+        <div className={mergeClasses(styles.strip, styles.stripActive)}>
           <span className={styles.actionGroup}>
             <Tooltip content="Lower rank (−)" relationship="label">
               <Button appearance="transparent" className={styles.action} icon={<SubtractRegular />} tabIndex={-1} data-testid={`slot-rank-dec-${slot}`} disabled={value.rank <= 0} onClick={() => actions.setRank(slot, value.rank - 1)} />
@@ -703,13 +709,6 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
               <Button appearance="transparent" className={styles.action} icon={<AddRegular />} tabIndex={-1} data-testid={`slot-rank-inc-${slot}`} disabled={value.rank >= max} onClick={() => actions.setRank(slot, value.rank + 1)} />
             </Tooltip>
           </span>
-        ) : (
-          <span className={styles.center}>
-            <RankPips rank={value.rank} max={max} />
-            <Caption1 className={styles.rankText} aria-hidden="true">{value.rank}/{max}</Caption1>
-          </span>
-        )}
-        {showActions ? (
           <span className={styles.actionGroup}>
             <Tooltip content={running ? 'A best-mod search is already running' : `Find best mod for ${label.toLowerCase()}`} relationship="label">
               <Button appearance="transparent" className={styles.action} icon={<SparkleRegular />} tabIndex={-1} data-testid={`slot-best-${slot}`} disabledFocusable={running} onClick={() => actions.startSweep(slot)} />
@@ -718,8 +717,11 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
               <Button appearance="transparent" className={styles.action} icon={<DismissRegular />} tabIndex={-1} data-testid={`slot-remove-${slot}`} onClick={() => actions.clearSlot(slot)} />
             </Tooltip>
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : height >= 70 && value.rank < max ? (
+        // Below max only (a maxed mod needs no "5/5"), and not on a short strip slot, whose name must stay readable.
+        <Caption1 className={mergeClasses(styles.rankText, styles.rankPlate)} aria-hidden="true" data-testid={`slot-rank-text-${slot}`}>{value.rank}/{max}</Caption1>
+      ) : null}
       {here ? <SweepBusy slot={slot} /> : null}
       {dropHint}
     </div>
@@ -738,32 +740,8 @@ function SweepBusy({ slot }) {
   );
 }
 
-/** Caption above a special-row slot: "Exilus" / "Arcane" with an InfoLabel whose button says what it's about. */
-export function SlotCaption({ children, info, about = null }) {
-  const styles = useStyles();
-  return (
-    <span className={styles.caption}>
-      <InfoLabel size="small" info={info} infoButton={{ 'aria-label': `About the ${about ?? children} slot` }}><Caption1>{children}</Caption1></InfoLabel>
-    </span>
-  );
-}
-
-/** "Primary Merciless" -> "Merciless": the caption and the weapon already say which kind of arcane it is. */
+/** "Primary Merciless" -> "Merciless": the weapon already says which kind of arcane it is. */
 const shortArcaneName = name => name.replace(/^(Primary|Secondary) (?=\S)/, '');
-
-/** Caption above an arcane slot: "Arcane", plus the equipped arcane's name, since the dome itself carries no text. */
-export function ArcaneCaption({ info, index = 0 }) {
-  const styles = useStyles();
-  const name = useApp(s => s.build.arcanes?.[index]?.name ?? null);
-  const label = index === 1 ? 'Kitgun arcane' : 'Arcane';
-  return (
-    <span className={styles.caption} title={name ?? undefined}>
-      <InfoLabel size="small" info={info} infoButton={{ 'aria-label': `About the ${label.toLowerCase()} slot` }}>
-        <Caption1 className={styles.arcaneCaption}>{name ? `${label} · ${shortArcaneName(name)}` : label}</Caption1>
-      </InfoLabel>
-    </span>
-  );
-}
 
 /**
  * An arcane slot (docs/arsenal-spec.md 4.6), shaped like an arcane: a dome in the art's proportions with the rank pill
@@ -778,6 +756,7 @@ export function ArcaneSlot({ width, height, tabbable = true, index = 0 }) {
   const focusId = arcaneFocusId(index);
   const slotName = index === 1 ? 'Kitgun arcane slot' : 'Arcane slot';
   const selected = useApp(s => s.selectedSlot === slotId);
+  const picking = useApp(s => s.pickerOpen);
   const pickup = useApp(s => s.pickup);
   const cards = useCards();
   const textCards = useTextCards();
@@ -849,7 +828,7 @@ export function ArcaneSlot({ width, height, tabbable = true, index = 0 }) {
   const support = arcaneSupport(value.name, ctx.data);
   const summary = arcaneSummary(value.name, ctx.data, value.rank);
   const imageUrl = !textCards ? cards?.arcaneUrl(value.name) : null;
-  const showActions = (hover || focusWithin || selected) && !active;
+  const showActions = (hover || focusWithin) && !(picking && selected) && !active;
   const stacks = value.options?.stacks;
   const stacksText = arcaneStacksText(value.name, ctx.data, stacks, value.rank);
   const assumes = controls.stacks ? (controls.stacks.max === 1 ? stacksText : `Assumes ${stacksText}`) : null;
@@ -892,69 +871,63 @@ export function ArcaneSlot({ width, height, tabbable = true, index = 0 }) {
         />
       </Tooltip>
       <span id={descId} hidden>{`${summary}${selected ? '. Selected' : ''}`}</span>
-      {controls.stacks || support.level !== 'full' ? (
-        <span className={styles.stacks}>
-          <Popover withArrow positioning="below-end">
-            <PopoverTrigger disableButtonEnhancement>
-              <button
-                type="button"
-                className={styles.stacksButton}
-                aria-label={`${assumes ?? (support.level === 'none' ? 'Not simulated' : 'Partially simulated')}: ${value.name} options`}
-                data-testid={index === 1 ? 'arcane-1-stacks' : 'arcane-stacks'}
-              >
-                {controls.stacks ? (
-                  <Badge appearance="filled" color="informative" size="small" style={{ maxWidth: '100%' }} title={assumes}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stacksText}</span>
-                  </Badge>
-                ) : (
-                  <Badge appearance="filled" color={support.level === 'none' ? 'informative' : 'warning'} size="small" icon={support.level === 'none' ? <InfoRegular /> : <WarningRegular />} />
-                )}
-              </button>
-            </PopoverTrigger>
-            <PopoverSurface className={styles.popover}>
-              {controls.stacks ? (
-                <Field
-                  label={controls.cap ? `${controls.cap.label} bonus, in % points` : controls.stacks.max === 1 ? 'Active (1) or off (0)' : 'Stacks'}
-                  hint={controls.cap ? `0 to ${controls.stacks.max} (${stacksText} at rank ${value.rank})` : `0 to ${controls.stacks.max}`}
-                >
-                  <SpinButton
-                    value={stacks ?? 0}
-                    min={0}
-                    max={controls.stacks.max}
-                    onChange={(_e, d) => {
-                      const v = d.value ?? Number(d.displayValue);
-                      if (Number.isFinite(v)) actions.setArcaneStacks(index, v);
-                    }}
-                  />
-                </Field>
-              ) : null}
-              <Caption1>Uptime: {controls.cap ? 'the bonus you set' : controls.stacks ? 'the stacks you set' : 'always active'}{controls.trigger ? ` (trigger: ${controls.trigger})` : ''}.</Caption1>
-              {support.level !== 'full' ? <Caption1>{support.level === 'none' ? 'Not simulated.' : 'Partially simulated.'} {support.note}</Caption1> : null}
-            </PopoverSurface>
-          </Popover>
-        </span>
+      {showActions ? (
+        // On the art's flat base, so the text under the dome (and its stacks button) stays reachable on hover.
+        <div className={mergeClasses(styles.pill, styles.pillActive)} style={{ bottom: PILL_ROOM }}>
+          <Tooltip content="Lower rank (−)" relationship="label">
+            <Button appearance="transparent" className={styles.action} icon={<SubtractRegular />} tabIndex={-1} data-testid={`slot-rank-dec-${slotKey}`} disabled={value.rank <= 0} onClick={() => actions.setArcaneRank(index, value.rank - 1)} />
+          </Tooltip>
+          <Caption1 className={styles.rankText} aria-hidden="true">{value.rank}/{max}</Caption1>
+          <Tooltip content="Raise rank (+)" relationship="label">
+            <Button appearance="transparent" className={styles.action} icon={<AddRegular />} tabIndex={-1} data-testid={`slot-rank-inc-${slotKey}`} disabled={value.rank >= max} onClick={() => actions.setArcaneRank(index, value.rank + 1)} />
+          </Tooltip>
+          <Tooltip content="Remove (Del)" relationship="label">
+            <Button appearance="transparent" className={styles.action} icon={<DismissRegular />} tabIndex={-1} data-testid={`slot-remove-${slotKey}`} onClick={() => actions.clearArcane(index)} />
+          </Tooltip>
+        </div>
       ) : null}
-      <div className={mergeClasses(styles.pill, showActions && styles.pillActive)}>
-        {showActions ? (
-          <>
-            <Tooltip content="Lower rank (−)" relationship="label">
-              <Button appearance="transparent" className={styles.action} icon={<SubtractRegular />} tabIndex={-1} data-testid={`slot-rank-dec-${slotKey}`} disabled={value.rank <= 0} onClick={() => actions.setArcaneRank(index, value.rank - 1)} />
-            </Tooltip>
-            <Caption1 className={styles.rankText} aria-hidden="true">{value.rank}/{max}</Caption1>
-            <Tooltip content="Raise rank (+)" relationship="label">
-              <Button appearance="transparent" className={styles.action} icon={<AddRegular />} tabIndex={-1} data-testid={`slot-rank-inc-${slotKey}`} disabled={value.rank >= max} onClick={() => actions.setArcaneRank(index, value.rank + 1)} />
-            </Tooltip>
-            <Tooltip content="Remove (Del)" relationship="label">
-              <Button appearance="transparent" className={styles.action} icon={<DismissRegular />} tabIndex={-1} data-testid={`slot-remove-${slotKey}`} onClick={() => actions.clearArcane(index)} />
-            </Tooltip>
-          </>
-        ) : (
-          <>
-            <RankPips rank={value.rank} max={max} />
-            <Caption1 className={styles.rankText} aria-hidden="true">{value.rank}/{max}</Caption1>
-          </>
-        )}
-      </div>
+      {picking ? null : (
+        // Plain text under the dome: the rank only below max, then the stacks (they open their popover).
+        <span className={styles.under}>
+          {value.rank < max ? <Caption1 className={styles.stacksText} aria-hidden="true">{value.rank}/{max}</Caption1> : null}
+          {controls.stacks || support.level !== 'full' ? (
+            <Popover withArrow positioning="below-end">
+              <PopoverTrigger disableButtonEnhancement>
+                <button
+                  type="button"
+                  className={styles.stacksButton}
+                  aria-label={`${assumes ?? (support.level === 'none' ? 'Not simulated' : 'Partially simulated')}: ${value.name} options`}
+                  data-testid={index === 1 ? 'arcane-1-stacks' : 'arcane-stacks'}
+                  title={assumes ?? undefined}
+                >
+                  {support.level !== 'full' ? (support.level === 'none' ? <InfoRegular aria-hidden="true" /> : <CircleHalfFillRegular aria-hidden="true" />) : null}
+                  <Caption1 className={styles.stacksText}>{controls.stacks ? stacksText : support.level === 'none' ? 'Not simulated' : 'Partly simulated'}</Caption1>
+                </button>
+              </PopoverTrigger>
+              <PopoverSurface className={styles.popover}>
+                {controls.stacks ? (
+                  <Field
+                    label={controls.cap ? `${controls.cap.label} bonus, in % points` : controls.stacks.max === 1 ? 'Active (1) or off (0)' : 'Stacks'}
+                    hint={controls.cap ? `0 to ${controls.stacks.max} (${stacksText} at rank ${value.rank})` : `0 to ${controls.stacks.max}`}
+                  >
+                    <SpinButton
+                      value={stacks ?? 0}
+                      min={0}
+                      max={controls.stacks.max}
+                      onChange={(_e, d) => {
+                        const v = d.value ?? Number(d.displayValue);
+                        if (Number.isFinite(v)) actions.setArcaneStacks(index, v);
+                      }}
+                    />
+                  </Field>
+                ) : null}
+                <Caption1>Uptime: {controls.cap ? 'the bonus you set' : controls.stacks ? 'the stacks you set' : 'always active'}{controls.trigger ? ` (trigger: ${controls.trigger})` : ''}.</Caption1>
+                {support.level !== 'full' ? <Caption1>{support.level === 'none' ? 'Not simulated.' : 'Partially simulated.'} {support.note}</Caption1> : null}
+              </PopoverSurface>
+            </Popover>
+          ) : null}
+        </span>
+      )}
       {dropHint}
     </div>
   );

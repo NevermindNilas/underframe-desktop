@@ -1,5 +1,7 @@
 # Underframe Desktop: arsenal layout, card gallery and screenshot import spec
 
+> **Partly superseded (2026-10-24).** The window layout and the results presentation are replaced by [declutter-spec.md](declutter-spec.md) (Loadout | Readout, the Picker on demand, one 48 px top bar, no status bar). Sections marked "Superseded" below no longer describe the app; the rest still applies.
+
 Status: binding spec for the arsenal redesign of `src/renderer`. It **extends** [ux-spec.md](ux-spec.md). Everything there still applies (shell, 48 px title bar, Mica and solid fallback, theme, type ramp, tokens, toasts, undo, honesty indicators, copy rules, WCAG 2.2 AA) unless this document replaces it. Where they conflict, this document wins. Reviewers check the build against section 11.
 
 Replaced parts of ux-spec.md: 2.1-2.2 (regions and sizes), 4.5 (mod slots), 4.7 (mod picker; the modal `Dialog` is removed), the Best mod tab of 4.10 (it moves into the gallery), and the slot shortcuts in 5.5.
@@ -77,6 +79,8 @@ What we don't copy:
 
 ## 2. Workspace regions
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the regions are now the top bar, the Loadout and the Readout (spec 1-2). The stats rail, the always-on gallery, the results rail and the compare drawer are gone.
+
 ```
 +--------------------------------------------------------------------------------------------+
 | title bar 48 (Mica) - unchanged                                                            |
@@ -111,6 +115,8 @@ What we don't copy:
 
 ### 2.1 Sizes and breakpoints (window width)
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): see spec 2 and `src/renderer/layout.js` (`readoutWidth`, slot sizes at rest and in the picking strip, Picker card sizes).
+
 | Width | Library | Stats rail | Results rail | Slot card (w x h) | Gallery card | Gutter |
 | --- | --- | --- | --- | --- | --- | --- |
 | >= 1920 (1920x1080) | inline 300, open | 300 | 440 | ~210 x 105 | Medium 148 | 24 |
@@ -132,6 +138,8 @@ What we don't copy:
 
 ### 2.2 1440x900 (primary target)
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): see spec 2.1-2.2.
+
 ```
 title 48 | toolbar 56
 stats 264 | stage ~780 (4 x 178 cards)                | results 380
@@ -144,9 +152,13 @@ Visible without scrolling: the result card, all 9 mod slots and the arcane slot,
 
 ### 2.3 1920x1080
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): see spec 2.3; the builds pane starts closed.
+
 Library inline 300 + stats 300 + stage ~880 + results 440. The gallery is ~1180 wide, so 7 Medium (148) cards across × 2+ rows (gallery ~440 tall). The results rail shows the result card, then the Charts tab with the chart and the hit list without scrolling.
 
 ### 2.4 1100x700
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): see spec 2.4; the stats are never folded into a tab.
 
 - No inline library; the stats fold into a results-rail tab "Stats" (tab order: Charts, Stats, Target, Notes).
 - The stage is ~760 wide (4 x 172 slots) and ~345 tall.
@@ -155,6 +167,8 @@ Library inline 300 + stats 300 + stage ~880 + results 440. The gallery is ~1180 
 - The result card stays fully visible; the rail tabs scroll below it.
 
 ### 2.5 Stacked (< 1100 CSS px, only reachable by zooming)
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): see spec 2.5; the Readout comes first.
 
 One scroll area, in this order:
 1. **Sticky DPS bar** (48 px, `position: sticky; top: 0`, `colorNeutralBackground1` with a bottom stroke): "Average DPS **9,874** ▼ 8.4% · TTK 3.70 s · Updating…". It keeps the headline visible at all times. A `Link` "Details" scrolls to the full result card.
@@ -167,6 +181,8 @@ The gallery is virtualised against the **outer** scroll area (scroll offset minu
 
 ## 3. Stats rail (left)
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the stats are the Readout's Base / Modded / Change table (spec 4).
+
 - `aside` region "Weapon stats" (F6 stop). Header: `Subtitle2` "Weapon stats" + `Caption1` fire mode.
 - Content is the current `StatsPanel`, unchanged in data: the damage total, the per-type rows, and the 8 stat rows with base values and up/down arrows.
 - **Arsenal behaviour**: each stat row is a `Button appearance="transparent"`. Clicking it puts that stat's search token into the gallery search: Crit chance → `cc`, Crit multiplier → `cd`, Status chance → `sc`, Multishot → `ms`, Fire rate → `fr`, Magazine → `mag`, Reload → `reload`, Faction → `bane`; a damage-type row → that element. It also switches the gallery to Mods. The tooltip reads "Find mods that raise crit chance".
@@ -175,6 +191,8 @@ The gallery is virtualised against the **outer** scroll area (scroll offset minu
 ## 4. Stage (centre)
 
 ### 4.1 Header
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the header holds the weapon and the fire mode only; the Catalyst and Forma line and the stage More menu moved into the capacity line's menu (spec 5).
 
 - **Left**:
   - Weapon `Combobox`, unchanged behaviour (ux-spec 4.4), `appearance="filled-darker"`, with its `Field` label "Weapon" visually hidden. The selected weapon name is shown at `Subtitle1` size.
@@ -203,6 +221,8 @@ The gallery is virtualised against the **outer** scroll area (scroll offset minu
 
 ### 4.5 Slot card anatomy (filled mod)
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): calmer cards: drain plate, rank text and a neutral honesty glyph only; no separate polarity glyph on filled slots, no rarity frame over art, pips only in the hover strip (spec 3).
+
 The card is a 2:1 box with `borderRadiusLarge` and `overflow: hidden`. Layers, bottom to top:
 
 1. **Image**: `<img src="app://local/core/images/mods/compact/<file>.webp" alt="" decoding="async">`, `object-fit: cover`. It is decorative, because the button's accessible name carries all of its information.
@@ -228,6 +248,8 @@ The card is a 2:1 box with `borderRadiusLarge` and `overflow: hidden`. Layers, b
 **Missing image** (no `core/images`, no entry in `index.json`, or `onerror`): the **text slot card** has the same size and overlays, a `colorNeutralBackground3` fill, the rarity frame, and the name centred in `Body1Strong` (2 lines, ellipsis, full name in a `Tooltip`), with the effect at the current rank in `Caption1` under it. The swap happens once per name (cached) with no flicker: the image fades in only after `load`, and is instant with reduced motion.
 
 ### 4.6 Empty, Exilus and Arcane states
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the captions with info buttons above Exilus and Arcane are gone; the arcane's stacks show as plain text (spec 3).
 
 - **Empty general slot**:
   - A `Button appearance="subtle"` filling the box: 1 px dashed `colorNeutralStroke1`, the slot polarity glyph centred at 24 px in `colorNeutralForeground3`, and `Caption1` "Slot 5" under it.
@@ -262,6 +284,8 @@ The card is a 2:1 box with `borderRadiusLarge` and `overflow: hidden`. Layers, b
 ## 5. Gallery (bottom)
 
 ### 5.1 Header
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the gallery is the Picker, shown only while picking, with one header row and a Filters popover; Hide equipped is on by default (spec 1.1).
 
 - **Row 1**:
   - `TabList size="small"`: **Mods** (with a count, e.g. "Mods 214"), **Arcanes**, and **Best mod**. Best mod shows only when a sweep exists; while running its label is "Best mod 12/85" with a tiny `Spinner`.
@@ -516,6 +540,8 @@ A `Caption1` with `LockClosedRegular` sits permanently in the review and progres
 
 ## 8. Results rail changes
 
+> **Superseded** by [declutter-spec.md](declutter-spec.md): there is no results rail: see the Readout (spec 4) and Why this DPS (spec 1.1).
+
 - The result card is unchanged. Its target line keeps "Change", which now selects the **Target** tab and focuses Enemy.
 - Tabs: **Charts | Target | Notes** (plus **Stats** first-after-Charts below 1280 px).
 - Target and Notes reuse `TargetCard` and `NotesCard` without the outer card chrome.
@@ -567,6 +593,8 @@ A `Caption1` with `LockClosedRegular` sits permanently in the review and progres
 - **Removed**: `mod-picker`, `mod-option`. The smoke test's picker steps switch to `gallery-search` + `gallery-card`.
 
 ### 10.2 Shortcuts (replace the slot rows in ux-spec 5.5)
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): Ctrl+F and Ctrl+1-9 open the Picker, Esc closes it, Ctrl+T opens the target, Ctrl+J opens the Compare dialog (spec 5).
 
 | Keys | Action |
 | --- | --- |
@@ -649,6 +677,8 @@ Regression
 - [ ] 53. `git ls-files` in the public repo lists no `.png`, `.webp` or `.svg` game assets and no asset-host URLs outside `core/`.
 
 ### 11.1 Scenes to capture (`UF_SCENES`, both themes, 1440x900 unless noted)
+
+> **Superseded** by [declutter-spec.md](declutter-spec.md): the scene list is in spec 8 and `src/renderer/scenes.js`.
 
 1. `01-arsenal-empty`: a new build, no mods, no slot selected, the gallery showing all mods.
 2. `02-arsenal-full`: a full build with an arcane, capacity 52/60, a mix of matched and mismatched polarities, results visible.

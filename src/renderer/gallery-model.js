@@ -57,7 +57,8 @@ export function sweepGains(ctx, build, sweep, slot) {
 /**
  * The gallery view.
  * @param {object} p { ctx, build, gallery, selectedSlot, sweep, polarities, partial: (name) => string[], engineOnly: (name) => boolean }
- * @returns {{ tab, parsed, items, total, hints, suggestions, unknown, targetSlot, contextText, exilusScoped, gains, sortGainEnabled, emptyText }}
+ * @returns {{ tab, parsed, items, total, hints, suggestions, unknown, targetSlot, contextText, exilusScoped, gains, sortGainEnabled, emptyText, hiddenEquipped }}
+ * `hiddenEquipped`: when nothing shows, the equipped cards that match but Hide equipped hides ([{ name, slot }]).
  */
 export function galleryView({ ctx, build, gallery, selectedSlot, sweep, polarities, partial, engineOnly }) {
   const weapon = ctx.weaponByName.get(build.weaponName);
@@ -79,6 +80,9 @@ export function galleryView({ ctx, build, gallery, selectedSlot, sweep, polariti
       hideEquipped: gallery.hideEquipped,
     };
     const { results, hints } = searchEntries(index, parsed, st);
+    const hiddenEquipped = !results.length && st.hideEquipped && current
+      ? searchEntries(index, parsed, { ...st, hideEquipped: false }).results.filter(r => r.name === current).map(r => ({ name: r.name, slot: slotId }))
+      : [];
     const sorted = sortResults(results, gallery.sort === 'gain' ? 'match' : gallery.sort, { blocked: st.blocked });
     const items = sorted.map(r => {
       const blocked = st.blocked.get(r.name) ?? null;
@@ -97,6 +101,7 @@ export function galleryView({ ctx, build, gallery, selectedSlot, sweep, polariti
           : 'Arcanes go in the arcane slot. Click a card to equip it.',
       exilusScoped: false, gains: null, sortGainEnabled: false,
       emptyText: list.length ? null : `No ${slotIndex === 1 ? 'kitgun ' : ''}arcanes fit the ${build.weaponName} in this data version.`,
+      hiddenEquipped,
     };
   }
 
@@ -134,6 +139,10 @@ export function galleryView({ ctx, build, gallery, selectedSlot, sweep, polariti
     const tested = new Set((sweep.all ?? []).map(r => r.name));
     results = results.filter(r => tested.has(r.name) || equipped.get(r.name) === sweep.slot);
   }
+  // Nothing shows, but equipped cards match: say where they are (Hide equipped is on by default).
+  const hiddenEquipped = !results.length && st.hideEquipped && !bestTab
+    ? searchEntries(scoped, parsed, { ...st, hideEquipped: false }).results.filter(r => equipped.has(r.name)).map(r => ({ name: r.name, slot: equipped.get(r.name) }))
+    : [];
   const byName = new Map(scoped.map(e => [e.name, e]));
   const drainOf = name => {
     const e = byName.get(name);
@@ -167,6 +176,7 @@ export function galleryView({ ctx, build, gallery, selectedSlot, sweep, polariti
     gains,
     sortGainEnabled: Boolean(gains),
     emptyText: fitting ? null : 'No compatible mods for this slot.',
+    hiddenEquipped,
   };
 }
 

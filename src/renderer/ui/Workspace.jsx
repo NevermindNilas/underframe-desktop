@@ -1,27 +1,23 @@
-// The workspace layer (docs/arsenal-spec.md 2): the build toolbar over the arsenal body grid: the stats rail and
-// the stage side by side, the gallery under both, the results rail on the right over the full height, and the
-// compare drawer over the gallery area only. Below 1100 px everything stacks in one scroll area with a sticky
-// DPS bar. Shows the boot skeleton and the boot error state too.
-import { useState } from 'react';
+// The workspace (docs/declutter-spec.md 1-2): two columns under the top bar. The Loadout (slots, then the lower area
+// that follows the task: Why this DPS at rest, the Picker while picking) and the Readout (DPS, stats, Compare).
+// Below 1100 CSS px (zoomed in) everything stacks in one scroll area, Readout first, with a sticky DPS bar. Shows
+// the boot skeleton and the boot error state too.
+import { useEffect, useState } from 'react';
 import {
   Body1, Button, Caption1, Link, MessageBar, MessageBarBody, ProgressBar, Skeleton, SkeletonItem, Subtitle1,
   makeStyles, tokens,
 } from '@fluentui/react-components';
 import { ErrorCircleRegular } from '@fluentui/react-icons';
 import { actions, errors } from '../controller.js';
-import { useApp, useDelayedFlag, useDerived } from '../hooks.js';
+import { useApp, useDelayedFlag, useDerived, useElementSize } from '../hooks.js';
 import { resultDelta, ttkText } from '../model.js';
 import { fmtInt } from '../format.js';
-import { BuildToolbar } from './BuildToolbar.jsx';
-import { ResultsColumn } from './ResultsColumn.jsx';
-import { CompareDrawer } from './CompareDrawer.jsx';
-import { Stage } from './Stage.jsx';
-import { Gallery } from './Gallery.jsx';
-import { StatsPanel } from './StatsPanel.jsx';
-import { DeltaBadge } from './common.jsx';
-
-export const DISCORD_URL = 'https://discord.gg/SNFv5KFQgR';
-export const UNDERFRAME_URL = 'https://www.underframe.site';
+import { Loadout } from './Loadout.jsx';
+import { Picker } from './Picker.jsx';
+import { Readout } from './Readout.jsx';
+import { WhyPanel } from './WhyPanel.jsx';
+import { DeltaText } from './common.jsx';
+import { DISCORD_URL } from './links.js';
 
 const useStyles = makeStyles({
   layer: {
@@ -29,48 +25,30 @@ const useStyles = makeStyles({
     minWidth: 0,
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: 'var(--uf-layer)',
-    borderTopLeftRadius: tokens.borderRadiusXLarge,
-    borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
-    borderLeft: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     overflow: 'hidden',
     position: 'relative',
   },
-  body: {
-    display: 'grid',
-    flexGrow: 1,
-    minHeight: 0,
-    minWidth: 0,
-  },
-  // The stats rail scrolls inside the stage's row without making it taller.
-  statsCell: { position: 'relative', minHeight: 0, minWidth: 0, gridRow: 1, gridColumn: 1 },
-  stats: {
-    position: 'absolute',
-    inset: 0,
-    overflowY: 'auto',
-    overflowX: 'hidden',
-    boxSizing: 'border-box',
-    outlineStyle: 'none',
-  },
-  stageCell: { gridRow: 1, minWidth: 0 },
-  lower: { gridRow: 2, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 },
-  resultsCell: { gridRow: '1 / span 2', display: 'flex', minHeight: 0 },
+  body: { display: 'grid', flexGrow: 1, minHeight: 0, minWidth: 0 },
+  loadoutColumn: { display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 },
+  // A zero-height sticky anchor: the bar hangs from it, so showing or hiding the bar never moves the content.
+  dpsAnchor: { position: 'sticky', top: 0, zIndex: 3, height: 0, overflow: 'visible' },
   dpsBar: {
-    position: 'sticky',
+    position: 'absolute',
     top: 0,
-    zIndex: 3,
+    left: 0,
+    right: 0,
     display: 'flex',
     alignItems: 'center',
     gap: tokens.spacingHorizontalS,
-    minHeight: '48px',
+    minHeight: '44px',
     padding: `0 ${tokens.spacingHorizontalL}`,
     backgroundColor: tokens.colorNeutralBackground1,
-    borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
+    boxShadow: tokens.shadow2,
     flexWrap: 'wrap',
   },
   dpsValue: { fontVariantNumeric: 'tabular-nums', fontWeight: tokens.fontWeightSemibold, fontSize: tokens.fontSizeBase400 },
   dpsMeta: { color: tokens.colorNeutralForeground2, fontVariantNumeric: 'tabular-nums' },
-  // Below 1100 CSS px (zoomed in): one scroll area holding the result card, the editor and the result tabs.
+  // Below 1100 CSS px (zoomed in): one scroll area holding the Readout, the Loadout and the lower area.
   stacked: {
     flexGrow: 1,
     minHeight: 0,
@@ -80,6 +58,7 @@ const useStyles = makeStyles({
     flexDirection: 'column',
     outlineStyle: 'none',
   },
+  stackedLower: { display: 'flex', flexDirection: 'column', minHeight: '360px' },
   progress: { position: 'absolute', top: 0, left: 0, right: 0 },
   status: {
     color: tokens.colorNeutralForeground2,
@@ -105,9 +84,20 @@ const useStyles = makeStyles({
   skeletonResults: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
 });
 
-/** Stacked layout (2.5): the headline result stays visible while scrolling to the gallery. */
-function DpsBar() {
+/**
+ * Stacked layout (2.5): the headline result stays visible while scrolling down to the slots and the Picker. It
+ * shows only once the Readout's own DPS has scrolled out of view, so the DPS is never on screen twice.
+ */
+function DpsBar({ root }) {
   const styles = useStyles();
+  const [heroVisible, setHeroVisible] = useState(true);
+  useEffect(() => {
+    const hero = document.querySelector('[data-testid="result-card"]');
+    if (!root || !hero || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(([e]) => setHeroVisible(e.isIntersecting), { root, threshold: 0 });
+    io.observe(hero);
+    return () => io.disconnect();
+  }, [root]);
   const sim = useApp(s => s.sim);
   const { simKey } = useDerived();
   const s = sim.summary;
@@ -115,14 +105,29 @@ function DpsBar() {
   const updating = useDelayedFlag(busy, 150);
   const show = s?.ok && !(sim.status === 'error' && sim.key === simKey);
   const delta = show ? resultDelta(s.avgDps, sim.prev?.avgDps) : null;
+  if (heroVisible) return <div className={styles.dpsAnchor} />;
   return (
+    <div className={styles.dpsAnchor}>
     <div className={styles.dpsBar} data-testid="dps-bar">
       <Caption1>Average DPS</Caption1>
       <span className={styles.dpsValue}>{show ? fmtInt(s.avgDps) : '—'}</span>
-      <DeltaBadge delta={delta} />
+      <DeltaText delta={delta} />
       <Caption1 className={styles.dpsMeta}>{show ? `· TTK ${ttkText(s)}` : ''}{updating ? ' · Updating…' : ''}</Caption1>
       <span style={{ flexGrow: 1 }} />
       <Link as="button" onClick={() => document.getElementById('result-card-region')?.scrollIntoView({ block: 'start' })}>Details</Link>
+    </div>
+    </div>
+  );
+}
+
+/** The Loadout column: the slots on top, the lower area (Picker or Why this DPS) under them. */
+function LoadoutColumn({ layout }) {
+  const styles = useStyles();
+  const [ref, size] = useElementSize();
+  return (
+    <div ref={ref} className={styles.loadoutColumn}>
+      <Loadout layout={layout} width={size.width} height={size.height || layout.body} />
+      <Picker layout={layout}><WhyPanel /></Picker>
     </div>
   );
 }
@@ -131,57 +136,25 @@ export function Workspace({ layout }) {
   const styles = useStyles();
   const phase = useApp(s => s.phase);
   const [stackedEl, setStackedEl] = useState(null);
-  const columns = [layout.statsWidth ? `${layout.statsWidth}px` : null, 'minmax(0, 1fr)', `${layout.resultsWidth}px`].filter(Boolean).join(' ');
-  const statsCol = layout.statsWidth ? 1 : 0;
+  const [stackedRef, stackedSize] = useElementSize();
   return (
     <main className={styles.layer} aria-label="Workspace">
-      {phase === 'error' ? <BootError /> : (
-        <>
-          <BuildToolbar compactToolbar={layout.statsFolded} />
-          {phase === 'loading' ? <BootSkeleton layout={layout} /> : layout.stacked ? (
-            <>
-              <div ref={setStackedEl} className={styles.stacked} data-scroll-region="" aria-label="Build and results" role="region" tabIndex={-1}>
-                <DpsBar />
-                <ResultsColumn layout={layout} part="card" />
-                <Stage layout={layout} />
-                <ResultsColumn layout={layout} part="tabs" />
-                {stackedEl ? <Gallery layout={layout} scrollEl={stackedEl} /> : null}
-              </div>
-              <CompareDrawer />
-            </>
-          ) : (
-            <div className={styles.body} style={{ gridTemplateColumns: columns, gridTemplateRows: 'auto minmax(0, 1fr)' }}>
-              {layout.statsWidth ? (
-                <div className={styles.statsCell}>
-                  <aside
-                    className={styles.stats}
-                    style={{ padding: `${layout.gutter}px ${Math.max(8, layout.gutter - 8)}px ${layout.gutter}px ${layout.gutter}px` }}
-                    data-pane="stats"
-                    data-scroll-region=""
-                    aria-label="Weapon stats"
-                  >
-                    <StatsPanel />
-                  </aside>
-                </div>
-              ) : null}
-              <div className={styles.stageCell} style={{ gridColumn: statsCol + 1 }}>
-                <Stage layout={layout} />
-              </div>
-              <div className={styles.lower} style={{ gridColumn: `1 / span ${statsCol + 1}` }} data-lower-area="">
-                <Gallery layout={layout} />
-                <CompareDrawer />
-              </div>
-              <div className={styles.resultsCell} style={{ gridColumn: statsCol + 2 }}>
-                <ResultsColumn layout={layout} />
-              </div>
-            </div>
-          )}
-        </>
+      {phase === 'error' ? <BootError /> : phase === 'loading' ? <BootSkeleton layout={layout} /> : layout.stacked ? (
+        <div ref={el => { setStackedEl(el); stackedRef(el); }} className={styles.stacked} data-scroll-region="" aria-label="Build and results" role="region" tabIndex={-1}>
+          <DpsBar root={stackedEl} />
+          <Readout layout={layout} stacked />
+          <Loadout layout={layout} width={stackedSize.width} height={stackedSize.height || layout.body} />
+          {stackedEl ? <div className={styles.stackedLower}><Picker layout={layout} scrollEl={stackedEl}><WhyPanel /></Picker></div> : null}
+        </div>
+      ) : (
+        <div className={styles.body} style={{ gridTemplateColumns: `minmax(0, 1fr) ${layout.readoutWidth}px`, gridTemplateRows: 'minmax(0, 1fr)' }}>
+          <LoadoutColumn layout={layout} />
+          <Readout layout={layout} />
+        </div>
       )}
     </main>
   );
 }
-
 
 function BootSkeleton({ layout }) {
   const styles = useStyles();
@@ -203,14 +176,13 @@ function BootSkeleton({ layout }) {
           <SkeletonItem size={32} style={{ width: '50%' }} />
           <SkeletonItem size={16} style={{ width: '20%' }} />
           <div className={styles.skeletonGrid}>
-            {Array.from({ length: 8 }, (_, i) => <SkeletonItem key={i} shape="rectangle" style={{ height: '128px' }} />)}
+            {Array.from({ length: 8 }, (_, i) => <SkeletonItem key={i} shape="rectangle" style={{ height: '96px' }} />)}
           </div>
-          <SkeletonItem shape="rectangle" style={{ height: '72px' }} />
+          <SkeletonItem shape="rectangle" style={{ height: '36px' }} />
         </div>
-        <div className={styles.skeletonResults} style={{ width: layout.resultsWidth ?? '40%' }}>
-          <SkeletonItem shape="rectangle" style={{ height: '190px' }} />
-          <SkeletonItem size={32} style={{ width: '60%' }} />
-          <SkeletonItem shape="rectangle" style={{ height: '200px' }} />
+        <div className={styles.skeletonResults} style={{ width: layout.readoutWidth ?? '40%' }}>
+          <SkeletonItem shape="rectangle" style={{ height: '96px' }} />
+          {Array.from({ length: 8 }, (_, i) => <SkeletonItem key={i} size={20} />)}
         </div>
       </Skeleton>
     </>
@@ -238,4 +210,3 @@ function BootError() {
     </div>
   );
 }
-

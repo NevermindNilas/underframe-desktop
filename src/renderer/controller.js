@@ -9,6 +9,7 @@ import { arcaneControls, arcaneMaxRank, isArcaneCompatible } from '../shared/arc
 import { createCardAssets, loadCardAssets } from '../shared/card-assets.js';
 import * as M from './model.js';
 import { buildStats, engineInputFor } from './sim.js';
+import { baseModeOf, weakestSlot } from './sheet.js';
 import * as H from './history.js';
 
 const PINS_KEY = 'uf.pins';
@@ -33,12 +34,12 @@ export function storageSet(key, value) {
 }
 
 const DEFAULT_UI = {
-  libraryOpen: null, // null: decided by window width on first layout
+  libraryOpen: null, // null: closed (the inline pane starts closed: docs/declutter-spec.md 5)
   libraryTab: 'mine',
   librarySort: 'recent',
   featuredType: 'All',
-  resultsTab: 'charts',
-  compareOpen: false,
+  // The lower area at rest, "Why this DPS" (docs/declutter-spec.md 1.1): 'health' | 'hits' | 'notes'.
+  whyTab: 'health',
   chartAsTable: false,
   // Gallery card size: null follows the window size (docs/arsenal-spec.md 2.1); 'small' | 'medium' | 'large'.
   galleryCardSize: null,
@@ -47,10 +48,13 @@ const DEFAULT_UI = {
   ocrPrivacySeen: false,
 };
 
-export const RESULTS_TABS = ['charts', 'stats', 'target', 'notes'];
+export const WHY_TABS = ['health', 'hits', 'notes'];
 export const GALLERY_SIZES = { small: 112, medium: 132, large: 168 };
 
-/** Gallery state that is not persisted: the tab, the query and the filter chips. */
+/**
+ * Picker state that is not persisted: the tab, the query and the filters. Hide equipped is on by default: the
+ * equipped build is in the slot strip right above the cards (docs/declutter-spec.md 1.1).
+ */
 export const DEFAULT_GALLERY = {
   tab: 'mods', // 'mods' | 'arcanes' | 'best'
   query: '',
@@ -58,7 +62,7 @@ export const DEFAULT_GALLERY = {
   pols: [],
   rarities: [],
   fits: true,
-  hideEquipped: false,
+  hideEquipped: true,
   sort: 'match',
 };
 
@@ -68,7 +72,10 @@ function loadUi() {
   if (!['mine', 'featured'].includes(ui.libraryTab)) ui.libraryTab = 'mine';
   if (!(ui.librarySort in M.LIBRARY_SORTS)) ui.librarySort = 'recent';
   if (!['All', 'Primary', 'Secondary'].includes(ui.featuredType)) ui.featuredType = 'All';
-  if (!RESULTS_TABS.includes(ui.resultsTab)) ui.resultsTab = 'charts';
+  if (!WHY_TABS.includes(ui.whyTab)) ui.whyTab = 'health';
+  // Keys of the arsenal layout that no longer exist.
+  delete ui.resultsTab;
+  delete ui.compareOpen;
   if (ui.galleryCardSize != null && !(ui.galleryCardSize in GALLERY_SIZES)) ui.galleryCardSize = null;
   ui.textCards = Boolean(ui.textCards);
   return ui;
@@ -106,8 +113,17 @@ export const store = createStore({
   baselineId: automated ? null : storageGet(BASELINE_KEY, null),
   sweep: null,
   ui: automated ? { ...DEFAULT_UI } : loadUi(),
-  // The slot the gallery equips into: 0-8 (8 = Exilus), M.ARCANE_SLOT, or null (the first empty slot).
+  // The slot the Picker equips into: 0-8 (8 = Exilus), M.ARCANE_SLOT, or null (the first empty slot).
   selectedSlot: null,
+  // Whether the Loadout is picking (the Picker in the lower area, the slots as a strip) or at rest.
+  pickerOpen: false,
+  // The Picker chose selectedSlot itself (a full build opened with no slot chosen: the weakest mod's slot).
+  pickerAuto: false,
+  // The Picker card the pointer or focus is on, previewed in the stats sheet: { kind, name, slot } or null.
+  preview: null,
+  // The target popover (Readout › Change, Ctrl+T) and the Compare dialog (Readout › Expand, Ctrl+J).
+  targetOpen: false,
+  compareOpen: false,
   gallery: { ...DEFAULT_GALLERY },
   // A mouse drag in progress: { kind: 'mod' | 'arcane', name, from: 'gallery' | slot | 'arcane', over }.
   drag: null,
@@ -209,13 +225,19 @@ export function focusLater(id, fallbackId = null) {
   requestAnimationFrame(attempt);
 }
 
+/** The focusable element of a slot: the arcane dome, a filled slot's card, or an empty slot's button. */
+export function slotFocusId(build, slot) {
+  if (M.isArcaneSlot(slot)) return M.arcaneFocusId(M.arcaneIndexOf(slot));
+  return build?.mods?.[slot] ? `slot-select-${slot}` : `slot-add-${slot}`;
+}
+
 // ---------- focus around panes that open and close (UX spec 5.6: focus is never lost to <body>) ----------
 
 const paneEl = pane => document.querySelector(`[data-pane="${pane}"]`);
 /** Element focused before a pane was opened, per pane: focus goes back there when the pane closes. */
 const paneReturn = {};
 /** The control that toggles each pane: the fallback focus target when it closes. */
-const PANE_TRIGGER = { builds: 'library-toggle', compare: 'compare-toggle' };
+const PANE_TRIGGER = { builds: 'library-toggle' };
 
 const focusable = el => Boolean(el && el !== document.body && el.isConnected && el.getClientRects?.().length);
 
@@ -242,6 +264,18 @@ function restorePaneFocus(pane, fallbackId = PANE_TRIGGER[pane]) {
     if (focusable(back) && !paneEl(pane)?.contains(back)) back.focus();
     else focusLater(fallbackId);
   });
+}
+
+/** What had focus when the Picker opened (a stat row, a slot), unless it was in the Picker itself. */
+let pickerOpener = null;
+function rememberPickerOpener(el) {
+  pickerOpener = focusable(el) && !el.closest?.('[data-pane="picker"]') ? el : null;
+}
+
+/** The slot a Picker opened with no slot chosen targets: null while an empty slot takes cards, else the weakest mod. */
+function autoTargetSlot(s) {
+  if (!s.build || !s.ctx || M.targetSlotFor(s.ctx, s.build, null, null) != null) return null;
+  return weakestSlot(s.ctx, s.build);
 }
 
 /** Hide a pane; when it held focus, move focus out deliberately. */
@@ -291,6 +325,8 @@ export function derived() {
       ctx,
       stats,
       statsError,
+      // The weapon's own stats (no mods, no arcanes): the sheet's Base column.
+      baseMode: build && ctx && stats ? baseModeOf(ctx, build) : null,
       enemy: build && ctx ? M.resolveEnemy(ctx, build.enemy) : null,
       partialMap: M.unhandledByMod(stats?.modifiers?.unhandled),
       simKey: build && ctx ? M.simKeyOf(ctx, build) : '',
@@ -486,8 +522,9 @@ async function startSweep(slot) {
       key: M.sweepKeyOf(ctx, build, slot), weaponName: build.weaponName, slotModAtStart: current, error: null,
     },
   });
-  // The gallery's Best mod tab selects itself (docs/arsenal-spec.md 5.6).
+  // The Picker opens on "Best for slot N" (docs/declutter-spec.md 1.1).
   setGallery({ tab: 'best' });
+  store.set({ pickerOpen: true, selectedSlot: slot, preview: null });
   const dpsOf = async modSlots => {
     const ref = await ensureAppState(weapon);
     const runs = await engine.simulate(engineInputFor(ctx, build, { appStateRef: ref, debugLog: false, modSlots }), M.SWEEP_SEEDS);
@@ -571,8 +608,12 @@ let openedBuildGeneration = 0;
 /** Deleted build id -> id of the new build its open copy was saved as (that delete's Undo then does nothing). */
 const orphanSavedAs = new Map();
 
+/** A new or empty build opens picking (docs/declutter-spec.md 1.1), at boot too. */
+const opensPicking = build => !build.mods.some(Boolean);
+
 function openWorkingBuild(build, notices = []) {
   openedBuildGeneration++;
+  pickerOpener = null;
   const s = store.get();
   if (s.sweep) stopSweep(null);
   pendingPin = false;
@@ -583,6 +624,11 @@ function openWorkingBuild(build, notices = []) {
     notices: notices.filter(n => n?.items?.length),
     orphanOf: null,
     selectedSlot: null,
+    // A build with no mods opens picking (cards go into the first empty slot); one with mods opens at rest.
+    pickerOpen: opensPicking(build),
+    pickerAuto: false,
+    preview: null,
+    targetOpen: false,
     pickup: null,
     drag: null,
     gallery: s.gallery.tab === 'best' ? { ...s.gallery, tab: 'mods' } : s.gallery,
@@ -624,7 +670,7 @@ export const actions = {
   setLibraryOpen(open) {
     const s = store.get();
     const overlay = s.libraryMode === 'overlay';
-    const isOpen = overlay ? s.overlayLibraryOpen : (s.ui.libraryOpen ?? true);
+    const isOpen = overlay ? s.overlayLibraryOpen : (s.ui.libraryOpen ?? false);
     if (Boolean(open) === Boolean(isOpen)) return;
     const apply = () => (overlay ? store.set({ overlayLibraryOpen: Boolean(open) }) : setUi({ libraryOpen: Boolean(open) }));
     if (open) {
@@ -636,26 +682,80 @@ export const actions = {
   },
   toggleLibrary() {
     const s = store.get();
-    actions.setLibraryOpen(s.libraryMode === 'overlay' ? !s.overlayLibraryOpen : !(s.ui.libraryOpen ?? true));
+    actions.setLibraryOpen(s.libraryMode === 'overlay' ? !s.overlayLibraryOpen : !(s.ui.libraryOpen ?? false));
   },
   setLibraryTab(tab) { setUi({ libraryTab: tab }); },
   setLibrarySort(sort) { if (sort in M.LIBRARY_SORTS) setUi({ librarySort: sort }); },
   setFeaturedType(type) { setUi({ featuredType: type }); },
-  setResultsTab(tab) { if (RESULTS_TABS.includes(tab)) setUi({ resultsTab: tab }); },
+  setWhyTab(tab) { if (WHY_TABS.includes(tab)) setUi({ whyTab: tab }); },
   setGalleryCardSize(size) { setUi({ galleryCardSize: size in GALLERY_SIZES ? size : null }); },
   setTextCards(on) { setUi({ textCards: Boolean(on) }); },
   markOcrPrivacySeen() { if (!store.get().ui.ocrPrivacySeen) setUi({ ocrPrivacySeen: true }); },
-  setCompareOpen(open) {
-    if (Boolean(open) === Boolean(store.get().ui.compareOpen)) return;
-    if (open) {
-      rememberFocus('compare');
-      setUi({ compareOpen: true });
-    } else {
-      hidePane('compare', () => setUi({ compareOpen: false }));
-    }
-  },
-  toggleCompare() { actions.setCompareOpen(!store.get().ui.compareOpen); },
+  /** The Compare dialog (Readout › Expand, Ctrl+J). The dialog returns focus to where it was opened from. */
+  setCompareOpen(open) { store.set({ compareOpen: Boolean(open) }); },
+  toggleCompare() { actions.setCompareOpen(!store.get().compareOpen); },
+  /** The target popover (Readout › Change, Ctrl+T). */
+  setTargetOpen(open) { store.set({ targetOpen: Boolean(open) }); },
   setChartAsTable(on) { setUi({ chartAsTable: Boolean(on) }); },
+
+  // ---- The Picker (docs/declutter-spec.md 1.1) ----
+
+  /**
+   * Start picking: the slots become a strip and the Picker takes the lower area. `slot` selects where cards go
+   * (undefined keeps the selection), `tab` and `query` set the Picker. Focus goes to the search unless `focus` is false.
+   */
+  openPicker({ slot, tab, query, focus = true, opener } = {}) {
+    const s = store.get();
+    if (s.phase !== 'ready') return;
+    // Focus goes back to what opened the Picker (a stat row) when it closes without a slot the player chose.
+    if (!s.pickerOpen) rememberPickerOpener(opener ?? document.activeElement);
+    const patch = { pickerOpen: true };
+    let sel = slot !== undefined ? slot : s.selectedSlot;
+    let auto = slot !== undefined ? false : s.pickerAuto;
+    if (slot !== undefined) patch.selectedSlot = slot;
+    const nextTab = tab ?? (M.isArcaneSlot(sel) ? 'arcanes' : sel != null && s.gallery.tab === 'arcanes' ? 'mods' : s.gallery.tab);
+    // A full build with no slot chosen: target the weakest mod's slot, so cards preview and equip somewhere (the
+    // Picker says so above the cards; clicking another slot changes it).
+    if (sel == null && nextTab === 'mods') {
+      const weakest = autoTargetSlot(s);
+      if (weakest != null) {
+        sel = weakest;
+        auto = true;
+        patch.selectedSlot = weakest;
+      }
+    }
+    patch.pickerAuto = sel != null && auto;
+    if (nextTab !== s.gallery.tab || query !== undefined) patch.gallery = { ...s.gallery, tab: nextTab, ...(query !== undefined ? { query: String(query) } : {}) };
+    store.set(patch);
+    if (focus) focusLater('gallery-search');
+  },
+  /**
+   * Back to rest: the Picker closes, the query and the selection clear. Focus goes to `focusSlot` (the slot just
+   * filled), else the slot that was selected, else the search bar, when focus was in the Picker or `focus` is true.
+   */
+  closePicker({ focusSlot, focus = null } = {}) {
+    const s = store.get();
+    if (!s.pickerOpen && s.selectedSlot == null) return;
+    const opener = pickerOpener;
+    pickerOpener = null;
+    const slot = focusSlot !== undefined ? focusSlot : s.selectedSlot;
+    const inPicker = Boolean(document.activeElement?.closest?.('[data-pane="picker"]')) || document.activeElement === document.body;
+    store.set({ pickerOpen: false, pickerAuto: false, selectedSlot: null, preview: null, gallery: { ...s.gallery, query: '', tab: s.gallery.tab === 'best' ? 'mods' : s.gallery.tab } });
+    if (focus === false || (focus == null && !inPicker)) return;
+    // Opened from a stat row and closed without a slot the player chose: focus goes back to that row.
+    if (focusSlot === undefined && (s.selectedSlot == null || s.pickerAuto) && focusable(opener)) {
+      requestAnimationFrame(() => { if (focusable(opener)) opener.focus(); else focusLater('gallery-search'); });
+      return;
+    }
+    if (slot == null) focusLater('gallery-search');
+    else focusLater(slotFocusId(store.get().build, slot));
+  },
+  /** The Picker card under the pointer or keyboard focus, previewed in the stats sheet (null clears it). */
+  setPreview(preview) {
+    const cur = store.get().preview;
+    if (cur === preview || (cur && preview && cur.name === preview.name && cur.slot === preview.slot && cur.kind === preview.kind)) return;
+    store.set({ preview: preview ?? null });
+  },
 
   async newBuild({ force = false } = {}) {
     const prior = document.activeElement;
@@ -864,28 +964,45 @@ export const actions = {
 
   // ---- Arsenal: slot selection, the gallery, drag and drop (docs/arsenal-spec.md 4-6) ----
 
-  /** Select a slot (0-8, M.ARCANE_SLOT) or null. The arcane slot switches the gallery to Arcanes. */
+  /**
+   * Select a slot (0-8, M.ARCANE_SLOT) and start picking for it; null clears the selection (cards then go into the
+   * first empty slot). The arcane slot switches the Picker to Arcanes. `focusGallery` moves focus to the search.
+   */
   selectSlot(slot, { focusGallery = false } = {}) {
     const s = store.get();
     if (s.phase !== 'ready') return;
     const next = M.isArcaneSlot(slot) || (Number.isInteger(slot) && slot >= 0 && slot < M.SLOT_COUNT) ? slot : null;
-    const tab = M.isArcaneSlot(next) ? 'arcanes' : next != null && s.gallery.tab === 'arcanes' ? 'mods' : s.gallery.tab;
-    store.set({ selectedSlot: next, gallery: tab !== s.gallery.tab ? { ...s.gallery, tab } : s.gallery });
-    if (focusGallery) focusLater('gallery-search');
+    if (next == null) {
+      store.set({ selectedSlot: null, pickerAuto: false, preview: null });
+      return;
+    }
+    actions.openPicker({ slot: next, focus: focusGallery });
   },
-  /** Select the slot, or clear the selection when it is already selected. */
+  /** A click (or Enter) on a slot: pick for it, or back to rest when it is the slot already being picked for. */
   toggleSlot(slot) {
-    actions.selectSlot(store.get().selectedSlot === slot ? null : slot);
+    const s = store.get();
+    // A click on the slot the Picker chose itself confirms it; a second click goes back to rest.
+    if (s.selectedSlot === slot && s.pickerOpen && s.pickerAuto) {
+      store.set({ pickerAuto: false });
+      focusLater('gallery-search');
+    } else if (s.selectedSlot === slot && s.pickerOpen) actions.closePicker({ focusSlot: slot, focus: true });
+    else actions.selectSlot(slot, { focusGallery: true });
   },
   setGallery(patch) { setGallery(patch); },
   setGalleryTab(tab) { if (['mods', 'arcanes', 'best'].includes(tab)) setGallery({ tab }); },
-  setGalleryQuery(query) { setGallery({ query: String(query ?? '') }); },
-  /** A stat row in the stats rail: put its search word in the gallery search and show Mods. */
-  searchStat(token) {
-    setGallery({ tab: 'mods', query: token });
-    focusLater('gallery-search');
+  /** The search box: typing opens the Picker (the box keeps its element, so no keystroke is lost). */
+  setGalleryQuery(query) {
+    setGallery({ query: String(query ?? '') });
+    if (String(query ?? '') && !store.get().pickerOpen) actions.openPicker({ focus: false });
   },
-  clearGalleryFilters() { setGallery({ effects: [], pols: [], rarities: [], hideEquipped: false, fits: true }); },
+  /**
+   * A stat row or damage type in the Readout: open the Picker on Mods searching for it. `opener` (the row) gets focus
+   * back when the Picker closes without a slot the player chose.
+   */
+  searchStat(token, { opener } = {}) {
+    actions.openPicker({ tab: 'mods', query: token, opener });
+  },
+  clearGalleryFilters() { setGallery({ effects: [], pols: [], rarities: [], hideEquipped: true, fits: true }); },
 
   /**
    * Gallery click, Enter or Space on a mod card: equip into the target slot (the selected slot, else the first empty
@@ -920,6 +1037,7 @@ export const actions = {
       }
       commitBuild(next);
       announce(`${name} moved to ${M.slotLabel(target).toLowerCase()}. Average DPS updating.`);
+      actions.closePicker({ focusSlot: target });
       return { ok: true, slot: target };
     }
     const reason = M.slotBlockReason(ctx, build, target, name);
@@ -929,8 +1047,10 @@ export const actions = {
     }
     const wasEmpty = !build.mods[target];
     actions.equipMod(target, name, null, { focus: false, quiet: true });
-    if (selectedSlot === target && wasEmpty) store.set({ selectedSlot: M.nextEmptySlot(store.get().build, target) });
     announce(`${name} equipped in ${M.slotLabel(target).toLowerCase()}. Average DPS updating.`);
+    const after = M.pickerAfterEquip(store.get().build, target, { wasEmpty, selected: selectedSlot });
+    if (after.close) actions.closePicker({ focusSlot: target });
+    else store.set({ selectedSlot: after.selectedSlot, pickerAuto: false, preview: null });
     return { ok: true, slot: target };
   },
 
@@ -1033,7 +1153,20 @@ export const actions = {
     if (build.arcanes?.[i]?.name === name) return { ok: true, slot: i };
     updateBuild(b => M.setArcane(ctx, b, i, M.newArcane(ctx, name)));
     announce(`${name} equipped in the ${i === 1 ? 'kitgun arcane' : 'arcane'} slot. Average DPS updating.`);
+    // Picking for the arcane slot ends with the arcane in it (docs/declutter-spec.md 1.1).
+    if (store.get().pickerOpen && store.get().gallery.tab === 'arcanes') actions.closePicker({ focusSlot: M.arcaneSlotId(i) });
     return { ok: true, slot: i };
+  },
+  /** A "Best for slot N" card: equip it there and go back to rest, to read the result. */
+  equipBest(name) {
+    const slot = store.get().sweep?.slot;
+    if (!Number.isInteger(slot)) return false;
+    const ok = actions.equipMod(slot, name, null, { focus: false });
+    if (ok) {
+      announce(`${name} equipped in ${M.slotLabel(slot).toLowerCase()}. Average DPS updating.`);
+      actions.closePicker({ focusSlot: slot });
+    }
+    return ok;
   },
   setArcaneRank(slot, rank) {
     const { ctx } = store.get();
@@ -1232,23 +1365,25 @@ export const actions = {
       return false;
     }
     if (!s.sim.summary?.ok || s.sim.key !== simKey() || s.sim.status === 'pending') {
-      // Still updating: pin as soon as the current result is in.
-      if (!pendingPin) notify({ intent: 'info', title: 'Pinning once the result finishes updating.' });
+      // Still updating: pin as soon as the current result is in (said, not toasted: the new row is the feedback).
+      if (!pendingPin) announce('Pinning once the result finishes updating.');
       pendingPin = true;
       if (s.sim.status !== 'pending' && s.sim.status !== 'running') scheduleSim(0);
       return false;
     }
-    const pin = M.makePin({ ...s.build, name: M.buildToSave(s.build).name }, s.sim.summary, crypto.randomUUID());
+    const pin = M.makePin({ ...s.build, name: M.buildToSave(s.build).name }, s.sim.summary, crypto.randomUUID(), derived().stats?.mode ?? null);
+    // The same unchanged result twice is one pin.
+    if (s.pins.some(p => M.samePin(p, pin))) {
+      announce('Already pinned.');
+      return false;
+    }
     const { pins, dropped } = M.addPin(s.pins, pin);
     const baselineId = dropped.some(p => p.id === s.baselineId) ? null : s.baselineId;
     store.set({ pins, baselineId });
     if (!automated) { storageSet(PINS_KEY, pins); storageSet(BASELINE_KEY, baselineId); }
-    notify({
-      intent: 'success',
-      title: dropped.length ? `Compare holds ${M.MAX_PINS} results; removed the oldest.` : `Pinned "${pin.buildName}" to compare.`,
-      body: dropped.length ? `Pinned "${pin.buildName}".` : null,
-      action: s.ui.compareOpen ? null : { label: 'Open compare', run: () => actions.setCompareOpen(true) },
-    });
+    // The new Compare row is the feedback: no toast over the Readout (only dropping the oldest is worth one).
+    announce(`Pinned "${pin.buildName}" to compare.`);
+    if (dropped.length) notify({ intent: 'info', title: `Compare holds ${M.MAX_PINS} results; removed the oldest.` });
     return true;
   },
 
@@ -1284,11 +1419,11 @@ export const actions = {
   clearPins() {
     const { pins, baselineId } = store.get();
     if (!pins.length) return;
-    // "Clear all" disappears with the pins: focus goes to "Pin current result" in the empty state.
-    const hadFocus = paneEl('compare')?.contains(document.activeElement);
-    store.set({ pins: [], baselineId: null });
+    // "Clear all" closes the Compare dialog with the pins: focus goes to Pin in the Readout's Compare section.
+    const hadFocus = Boolean(document.activeElement?.closest?.('[data-testid="compare-dialog"]'));
+    store.set({ pins: [], baselineId: null, compareOpen: false });
     if (!automated) { storageSet(PINS_KEY, []); storageSet(BASELINE_KEY, null); }
-    if (hadFocus) focusLater('pin-current', PANE_TRIGGER.compare);
+    if (hadFocus) focusLater('pin-current');
     notify({
       intent: 'success',
       title: `Cleared ${pins.length} pinned ${pins.length === 1 ? 'result' : 'results'}.`,
@@ -1497,7 +1632,10 @@ export async function boot({ onReady } = {}) {
     if (last) ({ build, warnings } = M.normalizeBuild(ctx, last));
 
     const cards = await cardsP;
-    store.set({ ctx, manifest, build, cards, snapshot: M.snapshotOf(build), notices: [noticeFrom(warnings)].filter(Boolean), phase: 'ready' });
+    store.set({
+      ctx, manifest, build, cards, snapshot: M.snapshotOf(build), notices: [noticeFrom(warnings)].filter(Boolean), phase: 'ready',
+      pickerOpen: opensPicking(build),
+    });
     timings.readyMs = Math.round(performance.now() - t0);
 
     uf.appInfo().then(appInfo => store.set({ appInfo }), () => {});

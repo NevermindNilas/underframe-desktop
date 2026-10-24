@@ -266,7 +266,7 @@ test('Ctrl+P while the result is updating pins once it is in', opts, async () =>
   actions.equipMod(3, 'Point Strike', 5, { focus: false });
   const run = actions.runNow();
   assert.equal(actions.pinResult(), false);
-  assert.match(lastToast().title, /once the result finishes/);
+  assert.match(store.get().announcement?.text ?? '', /once the result finishes/, 'said in the live region, not toasted');
   release();
   await run;
   await until(() => store.get().pins.length === 1);
@@ -316,4 +316,126 @@ test('clicking the gallery card of an equipped mod with no slot selected leaves 
   assert.equal(actions.equipFromGallery('Serration').slot, 5);
   assert.equal(store.get().build.mods[5]?.name, 'Serration');
   assert.equal(store.get().build.mods[1], null);
+});
+
+test('picking (docs/declutter-spec.md 1.1): a new build opens picking; filling empty slots moves on, the last one ends it', opts, async () => {
+  await fresh();
+  assert.equal(store.get().pickerOpen, true, 'an empty build opens the Picker');
+  actions.selectSlot(6);
+  assert.equal(store.get().pickerOpen, true);
+  assert.equal(store.get().selectedSlot, 6);
+  let r = actions.equipFromGallery('Serration');
+  assert.equal(r.slot, 6);
+  assert.equal(store.get().selectedSlot, 7, 'the selection moves on to the next empty slot');
+  assert.equal(store.get().pickerOpen, true, 'still picking while empty slots remain');
+  for (const [i, name] of ['Split Chamber', 'Point Strike', 'Vital Sense', 'Infected Clip', 'Stormbringer', 'Hellfire', 'Cryo Rounds'].entries()) {
+    actions.equipMod(i, name, null, { focus: false });
+  }
+  actions.selectSlot(7);
+  actions.clearSlot(7, { focus: false });
+  r = actions.equipFromGallery('Hammer Shot');
+  assert.equal(r.slot, 7);
+  assert.equal(store.get().pickerOpen, false, 'filling the last empty slot ends picking');
+  assert.equal(store.get().selectedSlot, null);
+});
+
+test('picking: swapping a filled slot, an arcane, or a Best-mod result goes back to rest; Esc clears the query', opts, async () => {
+  await fresh();
+  actions.equipMod(0, 'Serration', 10, { focus: false });
+  actions.closePicker({ focus: false });
+  assert.equal(store.get().pickerOpen, false);
+  actions.toggleSlot(0);
+  assert.equal(store.get().pickerOpen, true, 'a click on a filled slot starts picking for it');
+  actions.setGalleryQuery('heavy');
+  const r = actions.equipFromGallery('Heavy Caliber');
+  assert.equal(r.slot, 0);
+  assert.equal(store.get().pickerOpen, false, 'a swap ends picking');
+  assert.equal(store.get().gallery.query, '', 'closing clears the search');
+  actions.toggleSlot(M.ARCANE_SLOT);
+  assert.equal(store.get().gallery.tab, 'arcanes');
+  actions.equipArcane('Primary Merciless');
+  assert.equal(store.get().pickerOpen, false, 'equipping the arcane ends picking');
+  actions.toggleSlot(3);
+  actions.toggleSlot(3);
+  assert.equal(store.get().pickerOpen, false, 'a second click on the slot being picked for goes back to rest');
+  actions.setGalleryQuery('crit');
+  assert.equal(store.get().pickerOpen, true, 'typing in the search starts picking');
+  actions.searchStat('cc');
+  assert.equal(store.get().gallery.query, 'cc');
+  assert.equal(store.get().gallery.tab, 'mods');
+  actions.closePicker({ focus: false });
+});
+
+test('the target popover, Compare dialog and preview are transient state, reset when another build opens', opts, async () => {
+  await fresh();
+  actions.setTargetOpen(true);
+  actions.setPreview({ kind: 'mod', name: 'Serration', slot: 0 });
+  assert.equal(store.get().targetOpen, true);
+  assert.equal(store.get().preview.name, 'Serration');
+  actions.setPreview({ kind: 'mod', name: 'Serration', slot: 0 });
+  await actions.newBuild({ force: true });
+  assert.equal(store.get().targetOpen, false);
+  assert.equal(store.get().preview, null);
+  actions.toggleCompare();
+  assert.equal(store.get().compareOpen, true);
+  actions.toggleCompare();
+  assert.equal(store.get().compareOpen, false);
+});
+
+test('a stat row on a full build targets the weakest mod\'s slot; clicking it confirms, Esc returns to the row', opts, async () => {
+  await fresh();
+  const full = ['Serration', 'Split Chamber', 'Point Strike', 'Vital Sense', 'Infected Clip', 'Stormbringer', 'Hellfire', 'Magazine Warp'];
+  full.forEach((name, i) => actions.equipMod(i, name, null, { focus: false }));
+  actions.closePicker({ focus: false });
+  const row = makeEl('stat-row');
+  document.activeElement = row;
+  actions.searchStat('cc', { opener: row });
+  assert.equal(store.get().pickerOpen, true);
+  assert.equal(store.get().selectedSlot, 7, 'the slot whose mod adds the least on paper (Magazine Warp)');
+  assert.equal(store.get().pickerAuto, true);
+  // A card now previews and equips against that slot instead of "All slots are full".
+  const r = actions.equipFromGallery('Hammer Shot');
+  assert.equal(r.ok, true);
+  assert.equal(store.get().build.mods[7]?.name, 'Hammer Shot');
+  assert.equal(store.get().pickerOpen, false, 'a swap ends picking');
+  actions.undo();
+  // Esc (closePicker from the Picker) puts focus back on the row that opened it.
+  actions.searchStat('cc', { opener: row });
+  const focusedBefore = row.focused;
+  row.contains = () => false;
+  document.activeElement = body;
+  actions.closePicker({ focus: true });
+  await tick(5);
+  assert.equal(row.focused, focusedBefore + 1, 'focus went back to the stat row');
+  // Clicking the auto-chosen slot confirms it (still picking); another click goes back to rest.
+  actions.searchStat('cc');
+  actions.toggleSlot(7);
+  assert.equal(store.get().pickerOpen, true);
+  assert.equal(store.get().pickerAuto, false);
+  actions.toggleSlot(7);
+  assert.equal(store.get().pickerOpen, false);
+});
+
+test('a build with an empty slot keeps cards going to the first empty slot (no auto target)', opts, async () => {
+  await fresh();
+  actions.equipMod(0, 'Serration', null, { focus: false });
+  actions.closePicker({ focus: false });
+  actions.searchStat('cc');
+  assert.equal(store.get().selectedSlot, null);
+  assert.equal(store.get().pickerAuto, false);
+  actions.closePicker({ focus: false });
+});
+
+test('pinning the same unchanged result twice keeps one pin and raises no toast', opts, async () => {
+  await fresh();
+  actions.clearPins();
+  await actions.runNow();
+  await until(() => store.get().sim.status === 'done');
+  const before = toasts.length;
+  assert.equal(actions.pinResult(), true);
+  assert.equal(actions.pinResult(), false, 'already pinned');
+  assert.equal(store.get().pins.length, 1);
+  assert.equal(toasts.filter(t => /Pinned/.test(t.title ?? '')).length, 0, 'no pin toast');
+  assert.ok(toasts.length <= before + 1);
+  actions.clearPins();
 });

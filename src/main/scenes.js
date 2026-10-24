@@ -5,7 +5,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { consoleDetails, writeLine } from './smoke.js';
-import { captureWindow } from './capture.js';
+import { captureVia, captureWindow } from './capture.js';
 
 export const SCENES_ARG = '--uf-scenes';
 export const SCENES_TIMEOUT_MS = 240_000;
@@ -59,7 +59,7 @@ export function attachScenes(win, { exit, dir, timeoutMs = SCENES_TIMEOUT_MS, ax
     await mkdir(dir, { recursive: true });
     await delay(250);
     const file = path.join(dir, sceneFileName(++index, name));
-    const { png, via } = await captureWindow(win);
+    const { png, via } = await captureWindow(win, { via: captureVia() });
     await writeFile(file, png);
     saved.push(file);
     await writeLine(`[scenes] saved ${file} (${via})`);

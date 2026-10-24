@@ -259,7 +259,10 @@ function PickCard({ name, kind, index, clash = null, onPick }) {
 
 
 
-function Item({ item, number, problem, weaponName, active, onActive }) {
+/** A row read with high confidence and nothing to fix: shown as its name and rank only, until "Review all". */
+export const isSureItem = (item, problem) => Boolean(item.keep && item.name && !item.chosen && item.band === 'high' && !problem && !item.droppedFor);
+
+function Item({ item, number, problem, weaponName, active, onActive, reviewAll = false }) {
   const styles = useStyles();
   const ctx = useApp(s => s.ctx);
   const cards = useCards();
@@ -273,6 +276,8 @@ function Item({ item, number, problem, weaponName, active, onActive }) {
   const rankText = item.rankSource === 'pips' ? 'Rank from the card' : item.rankSource === 'drain' ? 'Rank from the drain'
     : item.rankSource === 'set' ? 'Rank set by you' : 'Rank assumed max';
   const attention = !kept && !item.suggestion && item.attention;
+  // Calm by default (docs/declutter-spec.md 3): a sure row needs no confidence pill, raw text or rank stepper.
+  const compact = !reviewAll && isSureItem(item, problem);
   return (
     <div
       className={mergeClasses(styles.item, active && styles.itemOn)}
@@ -295,10 +300,11 @@ function Item({ item, number, problem, weaponName, active, onActive }) {
         <div className={styles.itemHead}>
           <Caption1>{where}</Caption1>
           <Body1Strong>{kept ? item.name : item.suggestion ? `Suggestion: ${item.suggestion}` : item.kindNote ?? 'Empty'}</Body1Strong>
-          {item.suggestion || kept ? <ConfidenceBadge band={item.band} confidence={item.confidence} chosen={Boolean(item.chosen && kept)} /> : null}
+          {compact ? <Caption1 className={styles.raw} style={{ fontVariantNumeric: 'tabular-nums' }}>R{rank}/{max}</Caption1> : null}
+          {!compact && (item.suggestion || kept) ? <ConfidenceBadge band={item.band} confidence={item.confidence} chosen={Boolean(item.chosen && kept)} /> : null}
           {attention ? <Badge appearance="tint" color="warning" icon={<WarningRegular />} size="medium">Check</Badge> : null}
         </div>
-        {item.raw && !(item.chosen && kept) ? <Caption1 className={styles.raw}>Read as: "{item.raw}"</Caption1> : null}
+        {item.raw && !(item.chosen && kept) && !compact ? <Caption1 className={styles.raw}>Read as: "{item.raw}"</Caption1> : null}
         {attention ? (
           <Caption1 className={styles.attention}>
             {item.state === 'hidden' ? 'Something covers this slot in the screenshot. '
@@ -310,7 +316,7 @@ function Item({ item, number, problem, weaponName, active, onActive }) {
         {item.droppedFor && !kept ? <Caption1 className={styles.problem}><WarningRegular aria-hidden="true" /> Set aside: you picked {item.droppedFor}, which clashes with it.</Caption1> : null}
         {problem && kept ? <Caption1 className={styles.problem}><WarningRegular aria-hidden="true" /> {problem}. It won't be applied.</Caption1> : null}
         {!kept && item.suggestion ? <Caption1 className={styles.raw}>Low confidence: not applied unless you choose it.</Caption1> : null}
-        {kept ? (
+        {kept && !compact ? (
           <div className={styles.rankRow}>
             <Caption1>{rankText}:</Caption1>
             <Button className={styles.step} size="small" appearance="subtle" icon={<SubtractRegular />} aria-label={`Lower ${item.name} rank`} disabled={rank <= 0} onClick={() => O.setItem(item.key, { rank: rank - 1, rankSource: 'set' })} />
@@ -322,7 +328,7 @@ function Item({ item, number, problem, weaponName, active, onActive }) {
           <ReplacePicker item={item} weaponName={weaponName} onPick={name => O.replaceItem(item.key, name)}>
             <Button size="small" appearance={attention ? 'primary' : 'secondary'} data-testid="ocr-replace">{kept || item.suggestion ? 'Replace' : item.kind === 'arcane' ? 'Pick arcane' : 'Pick mod'}</Button>
           </ReplacePicker>
-          {kept ? <Button size="small" appearance="subtle" onClick={() => O.clearItem(item.key)}>Clear</Button> : null}
+          {kept && !compact ? <Button size="small" appearance="subtle" onClick={() => O.clearItem(item.key)}>Clear</Button> : null}
           {attention ? <Button size="small" appearance="subtle" onClick={() => O.clearItem(item.key)}>Leave empty</Button> : null}
           {!kept && item.suggestion ? <Button size="small" appearance="subtle" onClick={() => O.useSuggestion(item.key)}>Use suggestion</Button> : null}
         </div>
@@ -444,8 +450,10 @@ function Review({ ocr }) {
   const styles = useStyles();
   const ctx = useApp(s => s.ctx);
   const [active, setActive] = useState(null);
+  const [reviewAll, setReviewAll] = useState(false);
   const review = ocr.review;
   const problems = itemProblems(ctx, review);
+  const sure = review.items.filter(it => isSureItem(it, problems.get(it.key))).length;
   const numbered = review.items.map((it, i) => ({ ...it, number: i + 1 }));
   const supported = review.weaponName && ctx.weaponByName.has(review.weaponName);
   const parts = supported ? appliedParts(ctx, review) : null;
@@ -462,9 +470,16 @@ function Review({ ocr }) {
       <Screenshot ocr={ocr} numbered={numbered} active={active} onActive={setActive} />
       <div className={styles.list}>
         <WeaponChoice review={review} />
-        <Subtitle2 as="h3" style={{ margin: '8px 0 0' }}>Arcane, Exilus and slots</Subtitle2>
+        <div className={styles.weaponRow} style={{ marginTop: 8 }}>
+          <Subtitle2 as="h3" style={{ margin: 0, flexGrow: 1 }}>Arcane, Exilus and slots</Subtitle2>
+          {sure ? (
+            <ToggleButton size="small" appearance="subtle" checked={reviewAll} onClick={() => setReviewAll(v => !v)} data-testid="ocr-review-all">
+              {reviewAll ? 'Show less' : `Review all (${sure} read clearly)`}
+            </ToggleButton>
+          ) : null}
+        </div>
         {numbered.map(it => (
-          <Item key={it.key} item={it} number={it.number} problem={problems.get(it.key)} weaponName={review.weaponName} active={active === it.key} onActive={setActive} />
+          <Item key={it.key} item={it} number={it.number} problem={problems.get(it.key)} weaponName={review.weaponName} active={active === it.key} onActive={setActive} reviewAll={reviewAll} />
         ))}
         {review.unmatched.length ? (
           <Accordion collapsible>

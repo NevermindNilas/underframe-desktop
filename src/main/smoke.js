@@ -3,7 +3,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { captureWindow } from './capture.js';
+import { captureVia, captureWindow } from './capture.js';
 
 export const SMOKE_TIMEOUT_MS = 90_000;
 export const SMOKE_ARG = '--uf-smoke';
@@ -34,7 +34,7 @@ export function attachSmoke(win, { exit, env = process.env, timeoutMs = SMOKE_TI
   const wc = win.webContents;
 
   async function savePng(file) {
-    const { png } = await captureWindow(win);
+    const { png } = await captureWindow(win, { via: captureVia(env) });
     await mkdir(path.dirname(path.resolve(file)), { recursive: true });
     await writeFile(file, png);
   }
@@ -106,6 +106,19 @@ export function attachSmoke(win, { exit, env = process.env, timeoutMs = SMOKE_TI
   }
 
   /**
+   * Real key presses (OS-level input to the page, like the user's keyboard): `key` is an Electron key code ("Tab",
+   * "Space"); `modifiers` e.g. ['shift']. Lets smoke check the real Tab order, which DOM focus() calls can't.
+   */
+  async function press(key, modifiers = []) {
+    if (done || win.isDestroyed()) return false;
+    const mods = (Array.isArray(modifiers) ? modifiers : []).filter(m => ['shift', 'control', 'alt'].includes(m));
+    wc.sendInputEvent({ type: 'keyDown', keyCode: String(key), modifiers: mods });
+    if (String(key).length === 1) wc.sendInputEvent({ type: 'char', keyCode: String(key), modifiers: mods });
+    wc.sendInputEvent({ type: 'keyUp', keyCode: String(key), modifiers: mods });
+    return true;
+  }
+
+  /**
    * The screenshot named by UF_SMOKE_OCR_IMAGE (a local test image, never shipped), so the smoke run can drive real
    * recognition end to end. Resolves to its bytes, or null when the variable is not set.
    */
@@ -119,6 +132,7 @@ export function attachSmoke(win, { exit, env = process.env, timeoutMs = SMOKE_TI
     report: result => finish(result && typeof result === 'object' ? result : { ok: false, error: 'empty smoke result' }),
     capture,
     click,
+    press,
     ocrImage,
   };
 

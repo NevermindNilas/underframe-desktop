@@ -399,6 +399,18 @@ export function nextEmptySlot(build, after) {
   return order.find(i => !build.mods[i]) ?? null;
 }
 
+/**
+ * What the Picker does after a card was equipped into `target` (docs/declutter-spec.md 1.1): filling an empty slot
+ * moves on to the next empty one and keeps picking (a selected slot moves with it); filling the last empty slot, or
+ * swapping a filled one, ends picking. Returns { close, selectedSlot }.
+ */
+export function pickerAfterEquip(build, target, { wasEmpty, selected = null }) {
+  if (!wasEmpty) return { close: true, selectedSlot: null };
+  const next = nextEmptySlot(build, target);
+  if (next == null) return { close: true, selectedSlot: null };
+  return { close: false, selectedSlot: selected === target ? next : selected };
+}
+
 /** Swap two slots' mods (ranks kept). Returns the build unchanged when the swap is not allowed. */
 export function swapSlots(ctx, build, a, b) {
   if (a === b) return build;
@@ -710,7 +722,7 @@ export function weaponMatches(ctx, query = '') {
 }
 
 /** A compare-tray entry for the current result. `config` keeps what it was made from, to explain differences. */
-export function makePin(build, summary, id) {
+export function makePin(build, summary, id, mode = null) {
   const { preset, level, steelPath, faction, headshot, hp, armor, shields, overguard } = build.enemy;
   return {
     id,
@@ -721,6 +733,11 @@ export function makePin(build, summary, id) {
     avgDps: summary.avgDps,
     ttk: summary.ttk,
     ttkText: ttkText(summary),
+    // The sheet values the Compare dialog lists next to DPS and TTK (docs/declutter-spec.md 4).
+    stats: mode ? {
+      damage: mode.totalFinalDamage, critChance: mode.finalCritChance, critMultiplier: mode.finalCritMultiplier,
+      statusChance: mode.perProjectileStatusChance, fireRate: mode.finalFireRate, multishot: mode.finalMultishot,
+    } : null,
     config: {
       weaponName: build.weaponName,
       modeName: build.modeName,
@@ -802,6 +819,12 @@ export function compareRows(pins, baselineId = null) {
 }
 
 export const MAX_PINS = 20;
+
+/** Whether two pins hold the same result: the same setup (weapon, mode, mods, arcanes, target, time) and DPS. */
+export function samePin(a, b) {
+  if (!a?.config || !b?.config) return false;
+  return a.avgDps === b.avgDps && JSON.stringify(a.config) === JSON.stringify(b.config);
+}
 
 /** Add a pin, dropping the oldest beyond MAX_PINS. Returns { pins, dropped } (dropped: pins removed). */
 export function addPin(pins, pin, max = MAX_PINS) {

@@ -1,11 +1,11 @@
-// Global keyboard shortcuts (UX spec 5.5, docs/arsenal-spec.md 10.2) and F6 pane cycling. Inactive while a dialog is open.
+// Global keyboard shortcuts (UX spec 5.5, docs/declutter-spec.md 5) and F6 pane cycling. Inactive while a dialog is open.
 import { useEffect } from 'react';
 import { actions, focusLater, store } from '../controller.js';
 import { ARCANE_SLOT, EXILUS_SLOT } from '../model.js';
 import { chooseFile, importFromClipboard, importFromGame } from '../ocr-import.js';
 
-/** Panes in F6 order. Each region carries data-pane="<name>". */
-export const PANES = ['builds', 'toolbar', 'stats', 'stage', 'gallery', 'results', 'compare'];
+/** Panes in F6 order (docs/declutter-spec.md 6). Each region carries data-pane="<name>". */
+export const PANES = ['builds', 'topbar', 'loadout', 'picker', 'readout'];
 
 const TABBABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -75,6 +75,12 @@ export function useShortcuts() {
         actions.cancelPickup();
         return;
       }
+      // Esc with focus nowhere in particular (the page) ends picking; inside the Picker its own keys do it.
+      if (key === 'Escape' && store.get().pickerOpen && (document.activeElement === document.body || !document.activeElement)) {
+        e.preventDefault();
+        actions.closePicker({ focus: true });
+        return;
+      }
       // The overlay builds pane is modal too: build shortcuts (save, undo, new) work from it, but nothing
       // may open another surface behind or on top of it (the picker, compare).
       const overlayPane = dialogOpen();
@@ -108,7 +114,10 @@ export function useShortcuts() {
         if (!overlayPane) actions.toggleCompare();
       } else if (k === 'f' && !e.shiftKey) {
         e.preventDefault();
-        if (!overlayPane) focusLater('gallery-search');
+        if (!overlayPane) actions.openPicker();
+      } else if (k === 't' && !e.shiftKey) {
+        e.preventDefault();
+        if (!overlayPane) actions.setTargetOpen(true);
       } else if (k === 'i' && !e.shiftKey) {
         e.preventDefault();
         if (!overlayPane) chooseFile();
@@ -130,7 +139,7 @@ export function useShortcuts() {
         const n = Number(/^Digit[1-9]$/.test(e.code) ? e.code.slice(5) : key);
         e.preventDefault();
         if (overlayPane) return;
-        // Ctrl+1..8: slots 1-8; Ctrl+9: Exilus; Ctrl+Shift+9: the arcane slot. Focus goes to the gallery search.
+        // Ctrl+1..8: slots 1-8; Ctrl+9: Exilus; Ctrl+Shift+9: the arcane slot. The Picker opens, focus in its search.
         const slot = n === 9 ? (e.shiftKey ? ARCANE_SLOT : EXILUS_SLOT) : n - 1;
         actions.selectSlot(slot, { focusGallery: true });
       }

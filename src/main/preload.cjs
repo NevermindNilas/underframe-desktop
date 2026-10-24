@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('uf', {
   smokeCapture: tag => (smoke ? call('uf:smokeCapture', String(tag)) : Promise.resolve(null)),
   // Smoke-only: a real (OS-level) mouse click at page coordinates.
   smokeClick: (x, y) => (smoke ? call('uf:smokeClick', Number(x), Number(y)) : Promise.resolve(false)),
+  // Smoke-only: a real (OS-level) key press, e.g. smokePress('Tab', ['shift']).
+  smokePress: (key, modifiers = []) => (smoke ? call('uf:smokePress', String(key), Array.isArray(modifiers) ? modifiers.map(String) : []) : Promise.resolve(false)),
   // Smoke-only: the bytes of UF_SMOKE_OCR_IMAGE, or null.
   smokeOcrImage: () => (smoke ? call('uf:smokeOcrImage') : Promise.resolve(null)),
 

@@ -5,11 +5,10 @@ import {
 } from '@fluentui/react-components';
 import { DismissRegular } from '@fluentui/react-icons';
 import { actions } from '../controller.js';
-import { useApp } from '../hooks.js';
-import { fmtDate } from '../format.js';
-import { CREDIT_TEXT } from './StatusBar.jsx';
-import { DISCORD_URL, UNDERFRAME_URL } from './Workspace.jsx';
-import { WHATS_SIMULATED } from './ResultCard.jsx';
+import { useApp, useDerived } from '../hooks.js';
+import { fmtDate, fmtInt } from '../format.js';
+import { SIM_SEEDS, ttkText } from '../model.js';
+import { CREDIT_TEXT, DISCORD_URL, UNDERFRAME_URL, WHATS_SIMULATED } from './links.js';
 
 export const SHORTCUTS = [
   ['Build', [
@@ -22,11 +21,13 @@ export const SHORTCUTS = [
     ['Del', 'Delete the focused library build'],
   ]],
   ['Mods and arcanes', [
-    ['Ctrl+1 … Ctrl+8, Ctrl+9, Ctrl+Shift+9', 'Select slot 1-8, the Exilus slot or the arcane slot, and search the gallery'],
-    ['Ctrl+F', 'Search the gallery'],
-    ['Enter or Space (slot)', 'Select the slot; Space on a selected slot picks its mod up'],
-    ['Space (gallery card)', 'Pick the card up: arrows choose a slot, Enter drops, Del removes, Esc cancels'],
-    ['Enter (gallery card)', 'Equip into the selected slot, else the first empty slot'],
+    ['Ctrl+1 … Ctrl+8, Ctrl+9, Ctrl+Shift+9', 'Choose a mod for slot 1-8, the Exilus slot or the arcane slot (opens the Picker)'],
+    ['Ctrl+F', 'Open the Picker and search mods'],
+    ['Esc (Picker)', 'Done: back to the build, focus where the Picker was opened from'],
+    ['Enter (slot)', 'Choose a mod for the slot'],
+    ['Space (filled slot)', 'Pick its mod up: arrows choose a slot, Space or Enter drops, Del removes, Esc cancels'],
+    ['Space (card)', 'Pick the card up: arrows choose a slot, Enter drops, Del removes, Esc cancels'],
+    ['Enter (card)', 'Equip into the selected slot, else the first empty slot'],
     ['Alt+Enter', 'Details of the focused card'],
     ['+ / − / Home / End (slot)', 'Raise, lower, zero or max the rank'],
     ['Del (slot)', 'Remove the mod'],
@@ -41,9 +42,11 @@ export const SHORTCUTS = [
   ]],
   ['Results', [
     ['Ctrl+Enter', 'Run the simulation again now'],
+    ['Ctrl+T', 'Change the target'],
     ['Ctrl+P', 'Pin the result to compare'],
-    ['Ctrl+J', 'Show or hide compare'],
+    ['Ctrl+J', 'Show or hide all pins side by side'],
     ['Del', 'Remove the focused pin'],
+    ['Up / Down, Enter (weapon stats)', 'Move between stats; find mods that raise one'],
   ]],
   ['Navigation', [
     ['Ctrl+B', 'Show or hide the builds pane'],
@@ -87,10 +90,45 @@ function LeaveDialog({ dialog }) {
   );
 }
 
+/** Run details (Readout › ⋯): the spread of the seeded runs, hits, and what the simulation covers. */
+function RunDialog() {
+  const styles = useStyles();
+  const sim = useApp(s => s.sim);
+  const simTime = useApp(s => s.build.simTime);
+  const { simKey } = useDerived();
+  const s = sim.summary?.ok && sim.key === simKey ? sim.summary : null;
+  return (
+    <Dialog open onOpenChange={(_e, d) => { if (!d.open) actions.closeDialog(); }}>
+      <DialogSurface style={{ maxWidth: 480 }}>
+        <DialogBody>
+          <DialogTitle action={closeAction(() => actions.closeDialog())}>Run details</DialogTitle>
+          <DialogContent className={styles.about}>
+            {s ? (
+              <dl className={styles.dl} data-testid="run-details-list">
+                <dt><Caption1>Average DPS</Caption1></dt><dd className={styles.dd}><Body1>{fmtInt(s.avgDps)}</Body1></dd>
+                <dt><Caption1>Range</Caption1></dt><dd className={styles.dd}><Body1>{fmtInt(s.minDps)} to {fmtInt(s.maxDps)}</Body1></dd>
+                <dt><Caption1>Runs</Caption1></dt><dd className={styles.dd}><Body1>{s.runs} of {SIM_SEEDS.length} seeded runs, {s.maxTime} s each</Body1></dd>
+                <dt><Caption1>Time to kill</Caption1></dt><dd className={styles.dd}><Body1>{s.ttk == null ? `Not killed in ${s.maxTime} s` : ttkText(s)}</Body1></dd>
+                <dt><Caption1>Average hit</Caption1></dt><dd className={styles.dd}><Body1>{fmtInt(s.avgHit)}</Body1></dd>
+                <dt><Caption1>First hit</Caption1></dt><dd className={styles.dd}><Body1>{fmtInt(s.firstHitDamage)}</Body1></dd>
+              </dl>
+            ) : <Body1>The result is updating. Simulated time: {simTime} s per run.</Body1>}
+            <Body1>{WHATS_SIMULATED}</Body1>
+          </DialogContent>
+          <DialogActions>
+            <Button appearance="primary" onClick={() => actions.closeDialog()}>Close</Button>
+          </DialogActions>
+        </DialogBody>
+      </DialogSurface>
+    </Dialog>
+  );
+}
+
 function AboutDialog() {
   const styles = useStyles();
   const info = useApp(s => s.appInfo);
   const manifest = useApp(s => s.manifest);
+  const upstream = useApp(s => s.upstream);
   return (
     <Dialog open onOpenChange={(_e, d) => { if (!d.open) actions.closeDialog(); }}>
       <DialogSurface>
@@ -101,7 +139,7 @@ function AboutDialog() {
               <dt><Caption1>App</Caption1></dt><dd className={styles.dd}><Body1>{info?.version ?? '…'}</Body1></dd>
               <dt><Caption1>Electron</Caption1></dt><dd className={styles.dd}><Body1>{info?.electron ?? '…'} (Chrome {info?.chrome ?? '…'})</Body1></dd>
               <dt><Caption1>Game data</Caption1></dt>
-              <dd className={styles.dd}><Body1>{manifest?.dataVersion ?? 'unknown'}{manifest?.fetchedAt ? `, fetched ${fmtDate(manifest.fetchedAt)}` : ''}</Body1></dd>
+              <dd className={styles.dd}><Body1>{manifest?.dataVersion ?? 'unknown'}{manifest?.fetchedAt ? `, fetched ${fmtDate(manifest.fetchedAt)}` : ''}{upstream?.outdated ? '. Newer data is available: update the app to get it.' : ''}</Body1></dd>
             </dl>
             <Body1>{CREDIT_TEXT}</Body1>
             <Body1>Code licensed AGPL-3.0-only; Underframe engine and data are proprietary and used with permission.</Body1>
@@ -174,6 +212,7 @@ export function Dialogs() {
   if (!dialog) return null;
   if (dialog.type === 'leave') return <LeaveDialog dialog={dialog} />;
   if (dialog.type === 'about') return <AboutDialog />;
+  if (dialog.type === 'run') return <RunDialog />;
   if (dialog.type === 'shortcuts') return <ShortcutsDialog />;
   return null;
 }

@@ -295,3 +295,14 @@ test('engine errors read as plain words on the result card', opts, async () => {
   assert.match(M.simErrorText('The engine worker crashed: x'), /stopped unexpectedly/);
   assert.match(M.simErrorText('bad input'), /^The engine reported: bad input/);
 });
+
+test('gallery: with Hide equipped on, a search that only matches equipped cards says where they are', opts, async () => {
+  await setup();
+  let b = M.createBuild(ctx, { weaponName: 'Braton Prime' });
+  b = M.setSlot(b, 6, { name: 'Hellfire', rank: 5 });
+  const v = view(b, { hideEquipped: true, query: 'hellfire' });
+  assert.equal(v.items.length, 0);
+  assert.deepEqual(v.hiddenEquipped, [{ name: 'Hellfire', slot: 6 }]);
+  assert.deepEqual(view(b, { hideEquipped: false, query: 'hellfire' }).hiddenEquipped, [], 'nothing hidden with Hide equipped off');
+  assert.deepEqual(view(b, { hideEquipped: true, query: 'serration' }).hiddenEquipped, [], 'nothing hidden while other cards show');
+});

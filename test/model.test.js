@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { withEnemyStats, enemyForPreset, updateEnemy, buildToSave, buildAfterSave, snapshotOf, emptySlots } from '../src/renderer/model.js';
+import { withEnemyStats, enemyForPreset, updateEnemy, buildToSave, buildAfterSave, snapshotOf, emptySlots, pickerAfterEquip, EXILUS_SLOT } from '../src/renderer/model.js';
 
 const ctx = {
   presets: {
@@ -330,4 +330,29 @@ test('featured builds bring their arcanes with the stacks they were set to', asy
   assert.deepEqual(b.build.arcanes, [{ name: 'Secondary Enervate', rank: 5, options: { stacks: 0, startingStacks: 5 } }], 'an inactive arcane imports switched off');
   assert.deepEqual(unappliedFeatures(lex.source), []);
   assert.match(buildFromFeatured(actx, exhil).notes[0], /Primary Exhilarate is equipped but not simulated\./);
+});
+
+test('the Picker after an equip: next empty slot while filling, rest after a swap or the last empty slot', () => {
+  const b = (filled) => ({ mods: Array.from({ length: 9 }, (_, i) => (filled.includes(i) ? { name: `m${i}`, rank: 0 } : null)) });
+  // Filled slot 2 (it was empty), slots 3.. empty: the selection moves on to 3.
+  assert.deepEqual(pickerAfterEquip(b([0, 1, 2]), 2, { wasEmpty: true, selected: 2 }), { close: false, selectedSlot: 3 });
+  // No selection (cards go to the first empty slot): keep picking, keep no selection.
+  assert.deepEqual(pickerAfterEquip(b([0, 1, 2]), 2, { wasEmpty: true, selected: null }), { close: false, selectedSlot: null });
+  // Wraps around to an earlier empty slot.
+  assert.deepEqual(pickerAfterEquip(b([1, 2, 3, 4, 5, 6, 7]), 7, { wasEmpty: true, selected: 7 }), { close: false, selectedSlot: 0 });
+  // The last empty general slot: back to rest.
+  assert.deepEqual(pickerAfterEquip(b([0, 1, 2, 3, 4, 5, 6, 7]), 7, { wasEmpty: true, selected: 7 }), { close: true, selectedSlot: null });
+  // A swap (the slot was filled): back to rest.
+  assert.deepEqual(pickerAfterEquip(b([0, 1]), 1, { wasEmpty: false, selected: 1 }), { close: true, selectedSlot: null });
+  // The Exilus slot filled: on to the first empty general slot.
+  assert.deepEqual(pickerAfterEquip(b([0, EXILUS_SLOT]), EXILUS_SLOT, { wasEmpty: true, selected: EXILUS_SLOT }), { close: false, selectedSlot: 1 });
+});
+
+test('the same unchanged result is one pin', async () => {
+  const { samePin } = await import('../src/renderer/model.js');
+  const config = { weaponName: 'Braton Prime', mods: [{ name: 'Serration', rank: 10 }], enemy: { level: 100 } };
+  assert.equal(samePin({ id: 'a', avgDps: 100, config }, { id: 'b', avgDps: 100, config: structuredClone(config) }), true);
+  assert.equal(samePin({ id: 'a', avgDps: 100, config }, { id: 'b', avgDps: 101, config }), false, 'another result');
+  assert.equal(samePin({ id: 'a', avgDps: 100, config }, { id: 'b', avgDps: 100, config: { ...config, enemy: { level: 120 } } }), false, 'another setup');
+  assert.equal(samePin({ id: 'a', avgDps: 100 }, { id: 'b', avgDps: 100 }), false, 'old pins without a config never match');
 });
