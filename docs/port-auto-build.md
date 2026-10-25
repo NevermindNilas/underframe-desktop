@@ -257,7 +257,7 @@ Each target is then completed with the weapon's innate elements that its combine
 2. **Greedy pool** (filling). Compatible mods with a "DPS stat" that are not elemental. The direct Radiation and Magnetic mods are allowed here.
    - A **DPS stat** is an `UpgradeType` containing DAMAGE, CRIT, FIRE_RATE, FIRE_ITERATIONS, PROC_CHANCE, RELOAD_SPEED or STATUS_CHANCE, or equal to WEAPON_ATTACK_RANGE, or ending in _RANGE.
    - **Always admitted**: Internal Bleeding for primaries and Hemorrhage for secondaries, if compatible; Blood Rush, Weeping Wounds and Galvanized Reflex for melee.
-   - For Braton Prime this pool has 27 mods, including Exilus-capable mods such as Vile Acceleration, Hammer Shot and Speed Trigger, which can go in normal slots.
+   - For Braton Prime this pool has 27 mods, including Vile Precision, an Exilus mod that can also go in a normal slot. (Vile Acceleration, Hammer Shot and Speed Trigger are not Exilus mods: `data.json.exilusMods` is the list.)
 3. **Refinement pool** (swaps). Mods of exactly the weapon's mod `Type` that are compatible and have a DPS stat, **or** are weapon-specific augments. It **excludes everything in `data.json.exilusMods`**, unlike the greedy pool. **Elemental mods are included**, unless elemental swaps are restricted (4.6). For Braton Prime this pool has about 35 mods.
 
 ### 3.5 Arcane candidates
@@ -327,7 +327,7 @@ For each base, the composition's mods go into the first empty non-Exilus slots, 
 
 Then re-apply the arcane fallback and score the filled build with runs(5).
 
-**The Exilus slot is never filled by Auto Build**, and neither is the stance slot outside the stance step. A mod already in the Exilus slot is simply kept.
+**The site never fills the Exilus slot**, and neither the stance slot outside the stance step. A mod already in the Exilus slot is simply kept. This app adds a step 7.5 for an empty Exilus slot (section 14).
 
 ### 4.4 Step 4: top 3 (progress 70-95%)
 
@@ -600,7 +600,7 @@ The prepared path takes a further 15-20% off.
 - [x] With the whitelist on, only whitelisted mods are added, and pre-filled slots stay.
 - [x] A stat blacklist entry such as "Multishot" excludes every mod with a MULTISHOT or FIRE_ITERATIONS stat.
 - [x] The elemental blacklist ("Heat") yields no result whose final elements include Heat.
-- [x] Filled slots, the Exilus slot and a filled arcane slot are unchanged after a run.
+- [x] Filled slots, a filled Exilus slot and a filled arcane slot are unchanged after a run.
 - [x] The step order, run counts (runs(b) formula, the 200-run refinement, at most 10 iterations, one slot per iteration) and the progress percentages match section 4.
 - [x] The metric switches (raw / status) and the modifiers (single shot, floor) change the scoring as in 4.8.
 - [x] Cancel stops within about 200 ms of the current job, leaves the build untouched, and the pool is terminated.
@@ -769,3 +769,22 @@ The "Auto Forma" button on the capacity line, next to Auto build. It ports the b
 - **Options:** count from the weapon's own polarities (Forma already applied count again; a stray Forma can be undone), and plan for every mod at max rank (shown when one is below it; Apply raises them).
 - The capacity line's tools (Auto build, Auto Forma, Riven, the menu) are one toolbar: one tab stop, arrow keys between them, which keeps the tab stops before the first slot at 10 or fewer.
 - Tests: `test/auto-forma.test.js`. Smoke (`checkAutoForma`): a build over capacity without a Catalyst, the button and Apply by real clicks, the build fits, Undo restores it.
+
+## 14. Departure: the Exilus slot (step 7.5)
+
+The site never fills the Exilus slot. Users expect Auto build to, so the app adds one step after the final refinement
+(7) and before the final arcane check (8), only when the Exilus slot is empty:
+
+- **Candidates**: the `exilus` pool, the allowed Exilus mods (`data.json.exilusMods`) that fit the weapon, add no
+  element and have a stat the simulation counts (`hasDpsStat`); and each auto-placed (not kept) Exilus mod in a
+  general slot moved to the Exilus slot, with the freed slot filled again from the greedy pool. Cost Control, the
+  elemental blacklist and the arcane's requirement apply as in the other steps.
+- **Choice**: every candidate and the build as it is, at `runs(30)`; the best is kept only when it scores higher.
+- **Log**: "Added <mod> to the Exilus slot", "Moved <mod> to the Exilus slot and added <mod>", or "Exilus slot: no
+  Exilus mod adds damage to this build; left empty."
+- A build with every general slot kept and the arcane kept still runs, for the Exilus slot alone, when the pool has a
+  mod.
+
+Few Exilus mods change simulated damage (as of 2026-10-25: Bhisaj-Bal on Paris Prime; Sinister Reach and Ruinous
+Extension, range; Vile Precision, whose fire rate is a penalty), so the slot usually stays empty, and the log says
+why. Most Exilus mods are utility (recoil, ammo, zoom, projectile speed) and the data has no stats for many of them.

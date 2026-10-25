@@ -289,6 +289,30 @@ test('nothing to fill: every slot kept and the arcane kept; conditional mods are
 
 // ---------- the search, with a fake scorer ----------
 
+test('an empty Exilus slot gets an Exilus mod only when it scores higher (not on the site)', { skip }, async () => {
+  const { env } = envFor({ finalRefinementEnabled: false }, { build: { incarnon: BRATON_PERKS } });
+  assert.deepEqual(env.pools.exilus.map(m => m['Local Name']), ['Vile Precision'], 'the only Exilus mod with a counted stat on Braton Prime');
+  const start = { mods: Array(9).fill(null), arcanes: [null] };
+  // A scorer that rewards every mod: Vile Precision goes in the Exilus slot.
+  const rewarded = await AB.runAutoBuild(env, { start, score: fakeScorer() });
+  assert.equal(rewarded.mods[8]?.name, 'Vile Precision');
+  // Greedy fill may already have put it in a general slot (Exilus mods fit there too): then it is moved over.
+  assert.ok(rewarded.log.some(l => /(Added|Moved) Vile Precision to the Exilus slot/.test(l)), rewarded.log.join('\n'));
+  assert.equal(rewarded.mods.filter(m => m?.name === 'Vile Precision').length, 1);
+  // One that counts Vile Precision as a loss (its fire rate is a penalty): the slot stays empty, and the log says why.
+  const real = fakeScorer();
+  const penalised = async jobs => (await real(jobs)).map((v, i) => (jobs[i].mods[8] ? v - 5000 : v));
+  const kept = await AB.runAutoBuild(env, { start, score: penalised });
+  assert.equal(kept.mods[8], null);
+  assert.ok(kept.log.some(l => /no Exilus mod adds damage/.test(l)), kept.log.join('\n'));
+  // A full build with only the Exilus slot empty still runs, for that slot alone.
+  const full = rewarded.mods.map((m, i) => (i === 8 ? null : m));
+  const only = await AB.runAutoBuild(env, { start: { mods: full, arcanes: rewarded.arcanes }, score: fakeScorer() });
+  assert.deepEqual(only.mods.slice(0, 8), full.slice(0, 8));
+  assert.equal(only.mods[8]?.name, 'Vile Precision');
+  assert.equal(only.changed, true);
+});
+
 test('the search fills empty slots, keeps locks and the Exilus slot, never uses blacklisted mods', { skip }, async () => {
   const exilus = { name: 'Vile Precision', rank: 3 };
   const startMods = [null, { name: 'Point Strike', rank: 3 }, null, null, null, null, null, null, exilus];

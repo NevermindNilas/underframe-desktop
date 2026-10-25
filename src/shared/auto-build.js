@@ -189,7 +189,7 @@ export function modAllowed(env, mod) {
 
 /**
  * The candidate pools (docs/port-auto-build.md 3.4-3.5), in data order: elemental (compositions), greedy (filling),
- * refinement (swaps) and the arcanes for slot 0.
+ * refinement (swaps), exilus (the Exilus slot: Exilus mods with a stat the simulation counts) and the arcanes for slot 0.
  */
 export function candidatePools(env) {
   const { data, weapon } = env;
@@ -200,8 +200,9 @@ export function candidatePools(env) {
   const always = new Set(ALWAYS_GREEDY[weapon.type] ?? []);
   const greedy = allowed.filter(m => !elementalNames.has(m['Local Name']) && (hasDpsStat(m) || always.has(m['Local Name'])));
   const refinement = allowed.filter(m => m.Type === String(weapon.type).toUpperCase() && !env.exilus.has(m['Local Name']) && (hasDpsStat(m) || isAugment(m)));
+  const exilus = allowed.filter(m => env.exilus.has(m['Local Name']) && !elementalNames.has(m['Local Name']) && hasDpsStat(m));
   const arcanes = arcaneSlotCount(weapon) ? arcanesFor(weapon, data, 0).map(a => a.name).filter(n => !env.blacklist.has(n)) : [];
-  return { allowed, elemental, greedy, refinement, arcanes };
+  return { allowed, elemental, greedy, refinement, exilus, arcanes };
 }
 
 // ---------- elements ----------
@@ -511,7 +512,8 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
     return s.costControlEnabled && half !== max ? [max, half] : [max];
   };
 
-  // 0. Preparation: filled slots (with their stacks) and a filled arcane slot are locks; the Exilus slot is never filled.
+  // 0. Preparation: filled slots (with their stacks) and a filled arcane slot are locks; an empty Exilus slot is tried
+  // at the end (step 7.5, not on the site).
   const startMods = Array.from({ length: SLOT_COUNT }, (_, i) => {
     const m = start.mods?.[i];
     // A kept riven stays whole: its stats are the slot (docs/port-rivens.md).
@@ -543,9 +545,15 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
 
   // A candidate carries its Incarnon perks: the build's, and those the run picks for empty evolutions.
   let base = { mods: startMods, arcanes: startArcanes, incarnon: env.incarnon };
+  const exilusOpen = !startMods[EXILUS_SLOT] && env.pools.exilus.length > 0;
   if (!emptySlots.length && arcaneLocked && !env.evolution.shouldRun) {
-    progress(100, 'Done', 'Nothing to fill: every mod slot is kept and the arcane slot is filled.');
-    return { ...base, score: NaN, metric: env.metric, runs: 0, stoppedEarly: false, log, changed: false };
+    if (!exilusOpen) {
+      progress(100, 'Done', 'Nothing to fill: every mod slot is kept and the arcane slot is filled.');
+      return { ...base, score: NaN, metric: env.metric, runs: 0, stoppedEarly: false, log, changed: false };
+    }
+    const r = await fillExilus(base, NaN);
+    progress(100, 'Done', `Finished. Best ${env.metric === 'avgDps' ? 'DPS' : 'score'}: ${fmt(r.score)}.`);
+    return { ...r.cand, score: r.score, metric: env.metric, runs: totalRuns, stoppedEarly, log, changed: modsKey(r.cand.mods) !== modsKey(startMods) };
   }
 
   // 1.5 Arcane pre-pass: every eligible arcane on the starting build; the ranked list is the fallback order.
@@ -579,6 +587,57 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
     list.forEach((m, i) => { mods[free[i]] = m; });
     return { ...cand, mods };
   };
+
+  /**
+   * 7.5 The Exilus slot, when empty (the site never fills it): each Exilus mod with a stat the simulation counts, and
+   * each auto-placed mod that may go there moved in with its general slot filled again. The best is kept when it scores
+   * higher than the build as it is, at the same runs. Few Exilus mods change damage, so this is usually one check.
+   */
+  async function fillExilus(cand, score) {
+    if (cand.mods[EXILUS_SLOT] || timeUp()) return { cand, score };
+    const n = runs(30);
+    const arcane = arcaneOf(cand);
+    const ok = mods => fits(mods) && !blocked(mods) && (!arcane || arcaneEligible(env, arcane, mods, cand.incarnon));
+    const tries = [];
+    for (const mod of env.pools.exilus) {
+      const name = mod['Local Name'];
+      if (conflicts(name, cand.mods)) continue;
+      for (const rank of rankVariants(mod)) {
+        const mods = cand.mods.slice();
+        mods[EXILUS_SLOT] = { name, rank };
+        if (ok(mods)) tries.push({ mods, text: `Added ${name} to the Exilus slot` });
+      }
+    }
+    for (const i of GENERAL_SLOTS) {
+      const moved = cand.mods[i];
+      if (!moved || moved.isRiven || locked.has(i) || !env.exilus.has(moved.name)) continue;
+      const holed = cand.mods.slice();
+      holed[i] = null;
+      holed[EXILUS_SLOT] = moved;
+      for (const mod of env.pools.greedy) {
+        const name = mod['Local Name'];
+        if (conflicts(name, holed)) continue;
+        for (const rank of rankVariants(mod)) {
+          const mods = holed.slice();
+          mods[i] = { name, rank };
+          if (ok(mods)) tries.push({ mods, text: `Moved ${moved.name} to the Exilus slot and added ${name}` });
+        }
+      }
+    }
+    if (!tries.length) {
+      progress(null, null, 'Exilus slot: no Exilus mod adds damage to this build; left empty.');
+      return { cand, score };
+    }
+    progress(97, `Step 7.5: Exilus slot (${n} samples)`, `Testing ${tries.length} Exilus ${tries.length === 1 ? 'option' : 'options'}...`);
+    const [now, ...scores] = await evaluate([cand, ...tries.map(t => ({ ...cand, mods: t.mods }))], n);
+    const i = argmax(scores);
+    if (i < 0 || !(scores[i] > now)) {
+      progress(null, null, 'Exilus slot: no Exilus mod adds damage to this build; left empty.');
+      return { cand, score: Number.isFinite(score) ? score : now };
+    }
+    progress(null, null, `${tries[i].text}. ${fmt(now)} -> ${fmt(scores[i])}.`);
+    return { cand: { ...cand, mods: tries[i].mods }, score: scores[i] };
+  }
 
   /** Fill empty general slots one at a time with the best greedy candidate (runs(b) per try). */
   const greedyFill = async (cand, b, label) => {
@@ -858,6 +917,13 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
       cur = after;
       if (!timeUp()) bestScore = await one(cur, runs(30));
     }
+  }
+
+  // 7.5 The Exilus slot (not on the site).
+  if (exilusOpen && !stoppedEarly) {
+    const r = await fillExilus(cur, bestScore);
+    cur = r.cand;
+    bestScore = r.score;
   }
 
   // 8. Final arcane check.

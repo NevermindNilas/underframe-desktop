@@ -315,7 +315,7 @@ function KeepPicker({ keep, setKeep, keepArcane, setKeepArcane }) {
   const arcane = build.arcanes?.[0];
   const exilus = build.mods[EXILUS_SLOT];
   if (!filled.length && !arcane) {
-    return <Body1 as="p" className={styles.muted}>The build is empty: Auto build fills all 8 slots and picks an arcane.</Body1>;
+    return <Body1 as="p" className={styles.muted}>The build is empty: Auto build fills all 8 slots and picks an arcane, and the Exilus slot when an Exilus mod adds damage.</Body1>;
   }
   const kept = filled.filter(i => keep.has(i)).length + (arcane && keepArcane ? 1 : 0);
   const total = filled.length + (arcane ? 1 : 0);
@@ -420,7 +420,7 @@ function ResultView() {
   const r = useApp(s => s.autoBuild.result);
   const delta = r.before > 0 ? (r.after - r.before) / r.before : null;
   const changes = [];
-  GENERAL_SLOTS.forEach(i => {
+  [...GENERAL_SLOTS, EXILUS_SLOT].forEach(i => {
     const a = build.mods[i];
     const b = r.mods[i];
     if ((a?.name ?? null) !== (b?.name ?? null) || (a?.rank ?? null) !== (b?.rank ?? null)) changes.push({ key: `s${i}`, where: slotLabel(i), kind: 'mod', from: a, to: b });
