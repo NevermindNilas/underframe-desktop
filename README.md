@@ -9,8 +9,8 @@ developer's permission.
 
 Get the latest version from the [Releases page](https://github.com/NevermindNilas/underframe-desktop/releases/latest):
 
-- `Underframe Desktop Setup <version>.exe`: the installer (you can pick the folder; Start menu and desktop shortcuts)
-- `Underframe Desktop <version>.exe`: the portable app, which runs without installing
+- `Underframe-Desktop-Setup-<version>.exe`: the installer (you can pick the folder; Start menu and desktop shortcuts)
+- `Underframe-Desktop-<version>-Portable.exe`: the portable app, which runs without installing
 
 Windows 10 or 11, 64-bit. The app isn't code-signed, so Windows SmartScreen may warn the first time you run
 it: choose **More info**, then **Run anyway**. Everything runs on your PC: builds and rivens are saved
