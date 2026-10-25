@@ -762,7 +762,7 @@ Tests: `test/auto-build.test.js` adds Your Config's Cost Control default and the
 
 The "Auto Forma" button on the capacity line, next to Auto build. It ports the behaviour of underframe.site's Auto Polarize (`calculatePolarityOptimizationPlan`, script.js L12004; read as data, none of it copied) for the mods on the build, and goes further.
 
-- **As on the site:** slots are re-polarised to their mods' polarities (an Omni riven's slot to Madurai), or cleared; Umbra Forma are used only when nothing fits without; a Progenitor weapon's capacity per Forma is counted, so a Forma on an empty slot can pay off.
+- **As on the site:** slots are re-polarised to their mods' polarities (an Omni riven's slot to Madurai), or cleared; Umbra Forma are used only when nothing fits without. The site also counts a Progenitor weapon's capacity per Forma; the app takes those weapons at rank 40 (80 capacity) instead, so Forma add no capacity.
 - **Exact:** `src/shared/auto-forma.js` `planForma` is a dynamic program over the slots (mods placed, Forma spent, Forma on the weapon), not a greedy pick. It takes about 20 ms on a full build.
 - **Moves:** moving a mod to a slot that already matches costs no Forma, so mods may move between the general slots. Mods that add an element (their order sets the combined elements) and the weapon's own augments stay put (`pinnedSlot`), so DPS doesn't change. Off with "Move mods between slots".
 - **The plans:** the fewest Forma that fit, then one plan per Forma count that frees more capacity; each lists its polarities and moves. Apply sets them as one undo step, with Undo in the toast.

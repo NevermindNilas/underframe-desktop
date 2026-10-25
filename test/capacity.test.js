@@ -33,12 +33,11 @@ test('Omni matches everything but Umbra; a mod without polarity is never penalis
   assert.equal(slotDrain(unpolarised, 5, 'AP_ATTACK').effect, 'neutral');
 });
 
-test('capacity: 60 with a Catalyst, 30 without; progenitor weapons gain up to +20', () => {
+test('capacity: 60 with a Catalyst, 30 without; Kuva, Tenet and Coda weapons at rank 40, whatever the Forma', () => {
   assert.equal(capacityOf({ catalyst: true }), 60);
   assert.equal(capacityOf({ catalyst: false }), 30);
-  assert.equal(capacityOf({ catalyst: true, progenitor: true, forma: 3 }), 72);
-  assert.equal(capacityOf({ catalyst: true, progenitor: true, forma: 9 }), 80);
-  assert.equal(capacityOf({ catalyst: false, progenitor: true, forma: 5 }), 40);
+  for (const forma of [0, 3, 9]) assert.equal(capacityOf({ catalyst: true, progenitor: true, forma }), 80);
+  assert.equal(capacityOf({ catalyst: false, progenitor: true, forma: 0 }), 40);
   assert.equal(capacityOf({ catalyst: true, progenitor: false, forma: 5 }), 60);
 });
 

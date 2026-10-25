@@ -15,8 +15,8 @@ const GENERAL_SLOT_INDEX = [7, 6, 5, 4, 3, 2, 1, 0];
 const EXILUS_INDEX = 8;
 
 export const BASE_CAPACITY = 30;
-export const PROGENITOR_BONUS_PER_FORMA = 2;
-export const PROGENITOR_MAX_FORMA = 5;
+/** Kuva, Tenet and Coda weapons reach rank 40 (each Forma adds 2 ranks, 5 in all): 10 more than a rank 30 weapon. */
+export const PROGENITOR_EXTRA_RANKS = 10;
 
 /** One spelling per polarity: null for none; AP_WAVE -> AP_WARD, AP_OMNI -> AP_ANY, AP_UMBRAL -> AP_UMBRA. */
 export function normalizePolarity(code) {
@@ -50,11 +50,14 @@ export function slotDrain(mod, rank, slotPolarity) {
   return { drain, base, effect };
 }
 
-/** Capacity of a rank 30 weapon: 60 with an Orokin Catalyst, else 30; Kuva, Tenet and Coda weapons gain 2 per Forma (up to 5), doubled by the Catalyst. */
-export function capacityOf({ catalyst = true, progenitor = false, forma = 0 } = {}) {
+/**
+ * Capacity at max rank: 60 with an Orokin Catalyst, else 30; Kuva, Tenet and Coda weapons are taken at rank 40, so 80
+ * (40 without the Catalyst). The site counts their capacity per Forma it can see (+4 each, up to 5), but Forma on a
+ * slot that keeps its polarity don't show, and a built Kuva or Tenet weapon is at rank 40 anyway. `forma` is not used.
+ */
+export function capacityOf({ catalyst = true, progenitor = false } = {}) {
   const factor = catalyst ? 2 : 1;
-  const bonus = progenitor ? Math.min(Math.max(0, forma), PROGENITOR_MAX_FORMA) * PROGENITOR_BONUS_PER_FORMA * factor : 0;
-  return BASE_CAPACITY * factor + bonus;
+  return (BASE_CAPACITY + (progenitor ? PROGENITOR_EXTRA_RANKS : 0)) * factor;
 }
 
 const lookupKey = name => String(name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();

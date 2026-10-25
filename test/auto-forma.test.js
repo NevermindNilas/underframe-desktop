@@ -72,10 +72,10 @@ test('Forma already applied are spent, unless planning from scratch', () => {
   assert.deepEqual(scratch.options[1].changes, [{ slot: 5, from: 'AP_DEFENSE', to: null }]);
 });
 
-test('Progenitor weapons gain capacity per Forma, so a Forma on an empty slot can help', () => {
+test('Progenitor weapons plan against rank 40 capacity; a Forma on an empty slot never helps', () => {
   const r = planForma({ mods: at(['Serration']), innate: none(), effective: none(), modByName, progenitor: true, catalyst: false, moveMods: false });
-  // Each Forma adds 2: the 1st also halves Serration; up to 5 count.
-  assert.deepEqual(r.options.map(o => [o.spent, o.capacity, o.used]), [[0, 30, 14], [1, 32, 7], [2, 34, 7], [3, 36, 7], [4, 38, 7], [5, 40, 7]]);
+  // 40 without the Catalyst; only Serration's own Forma frees capacity.
+  assert.deepEqual(r.options.map(o => [o.spent, o.capacity, o.used]), [[0, 40, 14], [1, 40, 7]]);
 });
 
 test('max ranks plans for every mod at its max rank; nothing fits says how close it gets', () => {

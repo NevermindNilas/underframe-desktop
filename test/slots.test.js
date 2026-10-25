@@ -92,7 +92,7 @@ test('Lex Prime: innate Madurai on slot 8 and Naramon on the Exilus slot; Forma 
   assert.equal(setSlotPolarity(ctx, plain, 0, 'AP_UNIVERSAL'), plain, 'clearing an unpolarised slot changes nothing');
 });
 
-test('capacity: Catalyst off halves it, progenitor weapons gain per Forma, over capacity is measured', () => {
+test('capacity: Catalyst off halves it, progenitor weapons are at rank 40, over capacity is measured', () => {
   let b = build();
   for (let i = 0; i < 8; i++) b = put(b, i, i % 2 ? 'Barrel Diffusion' : 'Hornet Strike', i % 2 ? 5 : 10);
   const cap = buildCapacity(ctx, b);
@@ -102,8 +102,10 @@ test('capacity: Catalyst off halves it, progenitor weapons gain per Forma, over 
   assert.equal(cap.over, cap.used - 60);
   assert.equal(buildCapacity(ctx, { ...b, catalyst: false }).capacity, 30);
   let k = build({ weaponName: 'Kuva Nukor' });
+  assert.equal(buildCapacity(ctx, k).capacity, 80, 'no Forma to see, still rank 40');
   for (let i = 0; i < 3; i++) k = setSlotPolarity(ctx, k, i, 'AP_ATTACK');
-  assert.equal(buildCapacity(ctx, k).capacity, 72);
+  assert.equal(buildCapacity(ctx, k).capacity, 80);
+  assert.equal(buildCapacity(ctx, { ...k, catalyst: false }).capacity, 40);
 });
 
 test('polarities and the Catalyst are content (undo, unsaved changes) but only when changed', () => {

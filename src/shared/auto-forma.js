@@ -1,9 +1,9 @@
 // Auto Forma: the slot polarities that fit a build's mods with the fewest Forma, and where each extra Forma frees
 // the most capacity. Pure. underframe.site's Auto Polarize (calculatePolarityOptimizationPlan, script.js L12004) read
-// as data: it re-polarises slots to their mods' polarities, avoids Umbra Forma unless nothing fits without, and counts
-// a Progenitor weapon's capacity per Forma. This search is exact instead: each slot has a few useful polarities (as it
-// is, the weapon's own, its mod's, none), and moving a mod to a slot that already matches costs no Forma, so mods may
-// move between the general slots too. Mods whose slot matters (they add an element, whose order sets the combined
+// as data: it re-polarises slots to their mods' polarities and avoids Umbra Forma unless nothing fits without (a
+// Progenitor weapon is taken at rank 40, capacity.js, so its Forma add no capacity here). This search is exact instead:
+// each slot has a few useful polarities (as it is, the weapon's own, its mod's, none), and moving a mod to a slot that
+// already matches costs no Forma, so mods may move between the general slots too. Mods whose slot matters (they add an element, whose order sets the combined
 // elements) stay where they are. Slots are combined by dynamic programming over (mods placed, Forma spent, Forma on
 // the weapon), keeping the lowest drain, then the fewest changes, for each.
 import { capacityOf, normalizePolarity, slotDrain } from './capacity.js';
@@ -42,7 +42,7 @@ function wantedPolarity(mod, current) {
  * @param {(string|null)[]} o.effective the slot polarities as they are now, after Forma (9)
  * @param {(name: string) => object} o.modByName
  * @param {boolean} [o.catalyst]
- * @param {boolean} [o.progenitor] Kuva, Tenet and Coda weapons: +2 capacity per Forma (up to 5), doubled by the Catalyst
+ * @param {boolean} [o.progenitor] Kuva, Tenet and Coda weapons: rank 40 capacity (80 with the Catalyst)
  * @param {boolean} [o.fromScratch] count every Forma from the weapon's own polarities (else the ones already applied are spent)
  * @param {boolean} [o.maxRanks] plan for every mod at its max rank (rivens keep theirs)
  * @param {boolean} [o.moveMods] let mods move between the general slots
@@ -113,9 +113,6 @@ function search({
       const want = wantedPolarity(mod, effective[i]);
       if (want !== 'AP_UMBRA' || allowUmbra) out.add(want);
       out.add(null);
-    } else if (progenitor) {
-      // A Progenitor weapon's capacity grows with each Forma, wherever it goes.
-      out.add(innate[i] === 'AP_ATTACK' ? 'AP_TACTIC' : 'AP_ATTACK');
     }
     return out;
   };
