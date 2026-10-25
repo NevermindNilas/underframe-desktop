@@ -16,6 +16,7 @@ import { Dialogs } from './Dialogs.jsx';
 import { CompareDialog } from './CompareDialog.jsx';
 import { BuffsDialog } from './BuffsDialog.jsx';
 import { AutoBuildDialog } from './AutoBuildDialog.jsx';
+import { AutoFormaDialog } from './AutoFormaDialog.jsx';
 import { RivenDialog } from './RivenDialog.jsx';
 import { RivenToolsDialog } from './RivenToolsDialog.jsx';
 import { Announcer } from './Announcer.jsx';
@@ -113,6 +114,7 @@ function Shell() {
       <CompareDialog />
       <BuffsDialog />
       <AutoBuildDialog />
+      <AutoFormaDialog />
       {/* Before the riven dialog, which opens on top of it to edit a compare riven. */}
       <RivenToolsDialog />
       <RivenDialog />

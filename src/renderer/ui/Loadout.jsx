@@ -20,6 +20,7 @@ import { modeLabel } from '../../shared/fire-modes.js';
 import { previewSlots } from '../dnd.js';
 import { ArcaneSlot, ModSlot } from './SlotCard.jsx';
 import { AutoBuildButton } from './AutoBuildDialog.jsx';
+import { AutoFormaButton } from './AutoFormaDialog.jsx';
 import { RivenToolsButton } from './RivenToolsDialog.jsx';
 import { WeaponOptions } from './WeaponOptions.jsx';
 
@@ -47,6 +48,7 @@ const useStyles = makeStyles({
   capacity: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM, minHeight: '28px', minWidth: 0 },
   capacityCompact: { flexGrow: 1, maxWidth: '360px', minWidth: '240px', marginLeft: 'auto' },
   meterLabel: { color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap' },
+  tools: { padding: 0, flexShrink: 0, gap: '2px' },
   track: {
     position: 'relative',
     flexGrow: 1,
@@ -282,10 +284,14 @@ export function CapacityMeter({ compact = false }) {
       {cap.over ? <Caption1 className={styles.over}><ErrorCircleRegular aria-hidden="true" /> {cap.over} over</Caption1> : null}
       {/* Capacity isn't doubled: say so where the number is (the menu toggles it). */}
       {!cap.over && !capacity.catalyst ? <Caption1 className={styles.meterLabel} data-testid="catalyst-off">No Catalyst</Caption1> : null}
-      {/* Auto build's one quiet entry point (docs/declutter-spec.md 4), next to the build mechanics. */}
-      <AutoBuildButton />
-      <RivenToolsButton />
-      <CapacityMenu />
+      {/* Auto build's one quiet entry point (docs/declutter-spec.md 4), next to the build mechanics. The tools are one
+          toolbar: one tab stop, arrow keys between them. */}
+      <Toolbar aria-label="Build tools" size="small" className={styles.tools} data-testid="build-tools">
+        <AutoBuildButton />
+        <AutoFormaButton />
+        <RivenToolsButton />
+        <CapacityMenu />
+      </Toolbar>
     </div>
   );
 }

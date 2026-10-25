@@ -21,6 +21,7 @@ import { startAutoBuildWorker } from './auto-build-client.js';
 import { fmtInt } from './format.js';
 import { gainText } from './auto-build-format.js';
 import * as RTF from './riven-tools-flow.js';
+import * as AF from './auto-forma-flow.js';
 
 const PINS_KEY = 'uf.pins';
 const BASELINE_KEY = 'uf.pinBaseline';
@@ -145,6 +146,8 @@ export const store = createStore({
   rivenLibrary: { version: 1, rivens: [] },
   // The riven tools dialog (Slot my riven, Auto riven, Rolls data, the compare): see riven-tools-flow.js.
   rivenTool: null,
+  // The Auto Forma dialog ({ options } or null): see auto-forma-flow.js.
+  autoForma: null,
   // Auto build (docs/port-auto-build.md): the dialog, the run ({ status, percent, step, detail, runs, elapsedMs, result,
   // error, startSnapshot, ... } or null) and the user's configs (auto-build-settings.js library; null until loaded).
   autoBuildOpen: false,
@@ -764,6 +767,7 @@ function openWorkingBuild(build, notices = []) {
     targetOpen: false,
     buffsOpen: false,
     autoBuildOpen: false,
+    autoForma: null,
     pickup: null,
     drag: null,
     gallery: s.gallery.tab === 'best' ? { ...s.gallery, tab: 'mods' } : s.gallery,
@@ -1426,6 +1430,12 @@ export const actions = {
   },
 
   // ---- Rivens (docs/port-rivens.md) ----
+
+  // Auto Forma (auto-forma-flow.js).
+  openAutoForma() { return AF.openAutoForma(); },
+  closeAutoForma() { AF.closeAutoForma(); },
+  setAutoFormaOptions(patch) { AF.setAutoFormaOptions(patch); },
+  applyAutoForma(index) { return AF.applyAutoForma(index); },
 
   // Riven tools (docs/port-rivens.md 13; riven-tools-flow.js).
   openRivenTool(tool, opts) { return RTF.openRivenTool(tool, opts); },

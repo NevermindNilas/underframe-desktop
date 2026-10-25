@@ -1092,12 +1092,49 @@ async function checkRiven(app, errors, checks) {
   if (!dialog) { errors.push('riven: "New riven…" did not open the riven dialog'); return; }
   if (!(await waitFor(() => dialog.contains(document.activeElement), 1500))) errors.push(`riven: the dialog opened with focus on ${testIdOfFocus()}`);
   await checkDialogLayout(dialog, 'riven', errors, checks);
+  if (!dialog.querySelector('[data-testid="riven-polarity"]')) errors.push('riven: the dialog has no polarity picker');
   await capture(uf, 'riven-dialog', errors);
   await uf.smokePress('Escape');
   if (!(await waitFor(() => !$('[data-testid="riven-dialog"]'), 2000))) errors.push('riven: Esc did not close the dialog');
   actions.closePicker?.({ focusSlot: slot });
   checks.riven = true;
   log('riven dialog opens and closes');
+}
+
+/**
+ * Auto Forma: a build over capacity (no Catalyst), the capacity line's button by a real click, the plans (the fewest
+ * Forma first), Apply by a real click fits the build, and Undo puts it back.
+ */
+async function checkAutoForma(app, errors, checks) {
+  const { store, actions, uf } = app;
+  await actions.newBuild({ force: true });
+  actions.setWeapon(SMOKE_PLAN.weapon);
+  // 49 drain against 30: it fits only with Forma (26 with every mod in a matching slot).
+  SMOKE_PLAN.mods.forEach(([name, rank], slot) => actions.equipMod(slot, name, rank, { focus: false }));
+  actions.closePicker({ focus: false });
+  actions.setCatalyst(false);
+  await nextFrame();
+  const meter = () => $('[data-testid="capacity"]');
+  const over = () => Number(meter()?.getAttribute('aria-valuenow')) > Number(meter()?.getAttribute('aria-valuemax'));
+  if (!over()) { errors.push('auto forma: the test build is not over capacity'); return; }
+  const before = JSON.stringify(store.get().build);
+  if (!(await realClick(app, await waitFor(() => $('[data-testid="auto-forma-open"]'), 2000), errors, 'Auto Forma button'))) return;
+  const dialog = await waitFor(() => $('[data-testid="auto-forma-dialog"]'), 2000);
+  if (!dialog) { errors.push('auto forma: the button did not open the dialog'); return; }
+  await checkDialogLayout(dialog, 'auto forma', errors, checks);
+  const plans = dialog.querySelectorAll('[data-testid="auto-forma-plans"] input[type="radio"]');
+  if (!plans.length) { errors.push(`auto forma: no plans (${dialog.textContent.slice(0, 200)})`); return; }
+  checks.autoFormaPlans = plans.length;
+  await capture(uf, 'auto-forma', errors);
+  if (!(await realClick(app, $('[data-testid="auto-forma-apply"]'), errors, 'Auto Forma Apply'))) return;
+  if (!(await waitFor(() => !$('[data-testid="auto-forma-dialog"]'), 2000))) errors.push('auto forma: the dialog stayed open after Apply');
+  await nextFrame();
+  if (over()) errors.push(`auto forma: still over capacity after Apply (${meter()?.getAttribute('aria-valuetext')})`);
+  checks.autoForma = `${meter()?.getAttribute('aria-valuetext')}, ${store.get().build.slotPolarities.filter(Boolean).length} Forma`;
+  actions.undo();
+  if (JSON.stringify(store.get().build) !== before) errors.push('auto forma: Undo did not bring the build back');
+  actions.setCatalyst(true);
+  log(`auto forma: ${checks.autoForma}`);
 }
 
 /**
@@ -1291,6 +1328,7 @@ export async function runSmoke(app, { t0 }) {
     await checkWeaponOptions(app, errors, checks);
     await checkRiven(app, errors, checks);
     await checkRivenTools(app, errors, checks);
+    await checkAutoForma(app, errors, checks);
     // Clear toasts so the final screenshot shows the app itself.
     clearToasts();
     await sleep(500);
