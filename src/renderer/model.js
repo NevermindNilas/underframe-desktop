@@ -180,7 +180,7 @@ export function createBuild(ctx, overrides = {}) {
     externalBuffs: [],
     externalStatuses: [],
     // The weapon's options, at their defaults: the site's Progenitor bonus, 100% strength, the passives' defaults, no
-    // Incarnon Genesis (docs/port-incarnon.md).
+    // Incarnon perks (the Genesis is always installed; docs/port-incarnon.md).
     progenitor: null,
     exaltedStrength: null,
     passives: {},

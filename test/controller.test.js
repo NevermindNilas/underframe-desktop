@@ -440,13 +440,13 @@ test('pinning the same unchanged result twice keeps one pin and raises no toast'
   actions.clearPins();
 });
 
-test('Incarnon perks are build edits: the Genesis, a perk, a conditional\'s stacks; each one undoes', opts, async () => {
+test('Incarnon perks are build edits: a perk, a conditional\'s stacks; each one undoes', opts, async () => {
   await fresh();
   actions.setWeapon('Furis');
+  // The Genesis is always installed: no perks yet is null.
   assert.equal(store.get().build.incarnon, null);
-  actions.setIncarnonActive(true);
-  assert.equal(store.get().build.incarnon.evolution_1_active, true);
   actions.setIncarnonPerk(2, 2);
+  assert.equal(store.get().build.incarnon.evolution_1_active, true);
   assert.equal(store.get().build.incarnon.evolution_2_perk, 2);
   actions.setIncarnonConditional('Furis_evo2_perk2_multishot', 2);
   assert.equal(store.get().build.incarnon.conditionals.Furis_evo2_perk2_multishot, 2);
@@ -456,10 +456,9 @@ test('Incarnon perks are build edits: the Genesis, a perk, a conditional\'s stac
   assert.equal(store.get().build.incarnon.conditionals.Furis_evo2_perk2_multishot, 2);
   actions.undo();
   actions.undo();
-  assert.equal(store.get().build.incarnon.evolution_2_perk, null);
-  // Removing the Genesis clears the perks, as on the site.
+  assert.equal(store.get().build.incarnon, null, 'before the first perk');
   actions.setIncarnonPerk(4, 3);
-  actions.setIncarnonActive(false);
+  actions.setIncarnonPerk(4, 0);
   assert.equal(store.get().build.incarnon, null);
   actions.undo();
   assert.equal(store.get().build.incarnon.evolution_4_perk, 3);

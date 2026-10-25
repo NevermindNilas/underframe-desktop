@@ -9,7 +9,7 @@ import { maxRank, conflictingMod } from '../shared/mods.js';
 import { arcaneControls, arcaneMaxRank, isArcaneCompatible } from '../shared/arcanes.js';
 import { withModStacks } from '../shared/conditional-mods.js';
 import { effectiveProgenitor } from '../shared/stats.js';
-import { normalizeIncarnon, withConditional, withPerk } from '../shared/incarnon.js';
+import { withConditional, withPerk } from '../shared/incarnon.js';
 import * as X from '../shared/external-buffs.js';
 import * as RV from '../shared/rivens.js';
 import { createCardAssets, loadCardAssets } from '../shared/card-assets.js';
@@ -1114,15 +1114,7 @@ export const actions = {
       return { ...b, passives: { ...(b.passives ?? {}), [name]: cleaned[name] } };
     });
   },
-  // ---- Incarnon evolutions (incarnon.js): the Genesis, a perk per evolution, conditional perk stacks ----
-  /** Install or remove the Incarnon Genesis; removing it clears the perks, as on the site. */
-  setIncarnonActive(on) {
-    const { ctx } = store.get();
-    updateBuild(b => {
-      const next = on ? normalizeIncarnon(ctx.data, ctx.weaponByName.get(b.weaponName), { ...(b.incarnon ?? {}), evolution_1_active: true }) : null;
-      return JSON.stringify(next) === JSON.stringify(b.incarnon ?? null) ? b : { ...b, incarnon: next };
-    });
-  },
+  // ---- Incarnon evolutions (incarnon.js): a perk per evolution, conditional perk stacks (the Genesis is always on) ----
   /** An evolution's perk (a number; null or 0 clears it). */
   setIncarnonPerk(evolution, perk) {
     const { ctx } = store.get();

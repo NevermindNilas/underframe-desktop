@@ -37,8 +37,8 @@ Versions are named by their release date (`2026.10.25`).
   from a screenshot; the site's riven tools: Slot my riven, Auto riven (the best roll for the build), Rolls data (CSV)
   and a compare of two rivens
 - External buffs and target statuses, with presets
-- Weapon options: Progenitor bonuses, exalted weapons' ability strength, weapon passives, Incarnon evolutions (the
-  Genesis, a perk per evolution, conditional perks at the stacks you set, with the site's defaults); combined fire modes
+- Weapon options: Progenitor bonuses, exalted weapons' ability strength, weapon passives, Incarnon evolutions (a perk
+  per evolution, conditional perks at the stacks you set, with the site's defaults); combined fire modes
 - Auto build: the underframe.site optimizer, with blacklists, whitelists and Cost Control
 - Auto Forma: the fewest Forma that fit the mods and where they go (moving mods to matching slots first),
   with the extra Forma that free more capacity

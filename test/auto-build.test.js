@@ -33,6 +33,9 @@ function real() {
   return cached;
 }
 
+/** Braton Prime with a perk in every evolution: the search then picks mods only (the Genesis is always installed). */
+const BRATON_PERKS = { evolution_1_active: true, evolution_2_perk: 1, evolution_3_perk: 1, evolution_4_perk: 1, evolution_5_perk: null };
+
 /** An env for an empty (or given) Braton Prime build with these settings. */
 function envFor(patch = {}, { weaponName = 'Braton Prime', build: over = {}, headshot = false } = {}) {
   const { data, ctx } = real();
@@ -331,7 +334,7 @@ test('the search: whitelist only, elemental blacklist, and a filled arcane slot 
 test('the search is deterministic and uses the site\'s run counts', { skip }, async () => {
   const run = async () => {
     const log = [];
-    const { env } = envFor({ finalRefinementSampleSize: 200 });
+    const { env } = envFor({ finalRefinementSampleSize: 200 }, { build: { incarnon: BRATON_PERKS } });
     const res = await AB.runAutoBuild(env, { start: { mods: Array(9).fill(null), arcanes: [null] }, score: fakeScorer(log) });
     return { res, log };
   };
@@ -360,7 +363,7 @@ test('cancelling stops the search at its next check and nothing more is scored',
 });
 
 test('the time limit ends the search early with the best build found so far', { skip }, async () => {
-  const { env } = envFor();
+  const { env } = envFor({}, { build: { incarnon: BRATON_PERKS } });
   let t = 0;
   let calls = 0;
   const score = async jobs => { calls++; t += 1000; return fakeScorer()(jobs); };
@@ -504,7 +507,9 @@ test('a short real run on Braton Prime: whitelisted mods only, better than empty
   };
   const { r, runs } = await once();
   const used = r.mods.filter(Boolean).map(m => m.name);
-  assert.ok(used.length >= 5, used.join(', '));
+  assert.ok(used.length >= 4, used.join(', '));
+  // The Genesis is always installed, so the empty evolutions get perks too.
+  assert.deepEqual([2, 3, 4].map(e => Boolean(r.incarnon?.[`evolution_${e}_perk`])), [true, true, true]);
   for (const n of used) assert.ok(settings.modWhitelist.includes(n) && n !== 'Split Chamber', `${n}`);
   assert.ok(r.after > r.before * 3, `${r.before} -> ${r.after}`);
   assert.equal(r.runs + 16, runs, 'the search runs plus 8 + 8 for before and after');

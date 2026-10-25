@@ -1042,9 +1042,9 @@ async function checkFeatured(app, errors, checks) {
  */
 async function checkWeaponOptions(app, errors, checks) {
   const { store, actions, uf } = app;
-  // Braton Prime's only options are its Incarnon evolutions (docs/port-incarnon.md), not installed by default.
+  // Braton Prime's only options are its Incarnon evolutions (docs/port-incarnon.md), with no perk picked by default.
   const own = $('[data-testid="weapon-options"]')?.getAttribute('aria-label') ?? '';
-  if (!/no Incarnon Genesis/.test(own) || /Magnetic/.test(own)) errors.push(`options: Braton Prime's Options say "${own}", expected only its Incarnon evolutions`);
+  if (!/0 Incarnon perks/.test(own) || /Magnetic/.test(own)) errors.push(`options: Braton Prime's Options say "${own}", expected only its Incarnon evolutions`);
   const before = store.get().build;
   // The featured check leaves the library drawer open; it covers the Loadout.
   actions.setLibraryOpen(false);

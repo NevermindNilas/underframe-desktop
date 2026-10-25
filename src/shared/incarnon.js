@@ -125,7 +125,8 @@ export function incarnonConditionals(data, weapon, incarnon) {
 
 /**
  * Clean a stored or imported `incarnon` for a weapon: the Genesis on, each evolution's perk a number the weapon has
- * (or null), and the conditional settings of those perks clamped to their stacks. Null when not installed.
+ * (or null), and the conditional settings of those perks clamped to their stacks. Null when it has no perk: the app
+ * treats the Genesis as always installed (it adds nothing on its own), so null is "installed, no perks".
  */
 export function normalizeIncarnon(data, weapon, raw) {
   const entry = incarnonFor(data, weapon);
@@ -144,7 +145,7 @@ export function normalizeIncarnon(data, weapon, raw) {
     if (Number.isFinite(n)) conditionals[id] = Math.min(def.maxStacks, Math.max(0, Math.round(n)));
   }
   if (Object.keys(conditionals).length) out.conditionals = conditionals;
-  return out;
+  return INCARNON_EVOLUTIONS.some(e => out[`evolution_${e}_perk`]) ? out : null;
 }
 
 /** The build's Incarnon with one evolution's perk set (null clears it); the perk's conditional settings are dropped. */

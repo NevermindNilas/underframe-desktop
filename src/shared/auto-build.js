@@ -156,12 +156,13 @@ export function createAutoBuildEnv({ data, weapon, reload = null, build, enemy, 
 }
 
 /**
- * Whether the run picks Incarnon perks (the Genesis is installed and an evolution has none), the weapon's evolutions,
- * and the perks the build already has (kept).
+ * Whether the run picks Incarnon perks (the weapon has evolutions and one has no perk: the Genesis is always
+ * installed), the weapon's evolutions, and the perks the build already has (kept).
  */
 export function autoEvolution(data, weapon, incarnon) {
-  const evolutions = incarnonActive(incarnon) ? incarnonEvolutions(incarnonFor(data, weapon)) : [];
-  const locked = new Map(evolutions.filter(e => incarnon[`evolution_${e.number}_perk`]).map(e => [e.number, incarnon[`evolution_${e.number}_perk`]]));
+  const evolutions = incarnonEvolutions(incarnonFor(data, weapon));
+  const perkOf = e => (incarnonActive(incarnon) ? incarnon[`evolution_${e.number}_perk`] : null);
+  const locked = new Map(evolutions.filter(perkOf).map(e => [e.number, perkOf(e)]));
   return { shouldRun: evolutions.length > locked.size, evolutions, locked };
 }
 

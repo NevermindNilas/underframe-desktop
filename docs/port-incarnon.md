@@ -18,12 +18,12 @@ Related: docs/port-weapon-stats.md (the stats pipeline), docs/port-auto-build.md
 | Data | `data.incarnons`: 97 weapons, 69 of them guns. Each has `charge_count`, `charge_type`, `incarnon_max_ammo` and `evolutions`. |
 | Evolutions | `evolution_1` is the Incarnon Genesis (no perks; for guns its stats lists are empty). `evolution_2` .. `evolution_4` (65 guns) or `evolution_5` (Onos, Laetum, Phenmor, Felarx) each offer 2-3 perks. |
 | A perk | `perk_M_description` (the text), `perk_M_stats` (always on), `perk_M_conditional_stats` (on a trigger). Stats are `{ Stat, UpgradeType, Value, OriginalValue, OperationType?, MaxStacks?, LastShots?, StatusChanceByForm? }`. |
-| Build field | `build.incarnon = { evolution_1_active, evolution_2_perk .. evolution_5_perk }` (a perk number or null). New builds start with the Genesis off (L13740-13741). |
-| Genesis | Off: no perk counts. Turning it off clears the four perks (L31863-31870). The Incarnon Form fire modes run either way (they are weapon modes, not perks). |
+| Build field | `build.incarnon = { evolution_1_active, evolution_2_perk .. evolution_5_perk }` (a perk number or null). On the site new builds start with the Genesis off (L13740-13741); in this app the Genesis is always installed, because every player of an Incarnon weapon has it (decision in section 8). |
+| Genesis | Site: off, no perk counts; turning it off clears the four perks (L31863-31870). It adds no stats itself (empty for guns), so "always installed" changes nothing until a perk is picked. The Incarnon Form fire modes run either way (they are weapon modes, not perks). |
 | Conditional parts | One state per conditional stat in the build's `activeConditionals`, keyed `<weapon>_evo<N>_perk<M>_<Stat without spaces>` (L31060-31120): `{ isActive, stacks, auto }`. |
 | Defaults | A state the user has not set (`auto`) is decided from the perk's text, the stats and the fire mode (L31200-31342); section 5. |
 | Where perks act | In the site's stat pipeline (`calculateWeaponStats`, L28496-28700, L28720-28880, L29280-30560) and in a few engine fields (section 6). The engine gets no perk list. |
-| Auto Build | With the Genesis on and an evolution empty, it picks perks (steps 2.7 and 4.3, L40029-40276, L44555-44715). |
+| Auto Build | With the Genesis on (in this app: always) and an evolution empty, it picks perks (steps 2.7 and 4.3, L40029-40276, L44555-44715). |
 
 ## 1. Data contract
 
@@ -47,11 +47,11 @@ Per gun incarnon (`data.incarnons[i]`):
 
 - Site: `build.incarnon` as in section 0, and the conditional states in `build.activeConditionals` (with every other
   conditional). The v3 share link packs it as `ic` (L1357-1385). The trusted (featured) builds carry both.
-- **This app**: `build.incarnon` in the site's shape, `null` without the Genesis, plus `conditionals`: `{ [id]: stacks }`
+- **This app**: `build.incarnon` in the site's shape, `null` when no perk is picked, plus `conditionals`: `{ [id]: stacks }`
   for the conditional parts the user set (0 is off). Automatic states are not stored; they are worked out again on
   every calculation, as the site re-derives its `auto` states.
-- Cleaning (`src/shared/incarnon.js` `normalizeIncarnon()`): the Genesis must be on and the weapon must have
-  evolutions; a perk number the weapon lacks becomes null; a setting for a perk not picked is dropped; stacks clamp to
+- Cleaning (`src/shared/incarnon.js` `normalizeIncarnon()`): the weapon must have evolutions and at least one perk
+  must be picked (else null); a perk number the weapon lacks becomes null; a setting for a perk not picked is dropped; stacks clamp to
   the stat's max. The main process (`src/main/builds-store.js` `cleanIncarnon()`, which ships without the data) keeps
   the shape and types only.
 - The field is a weapon option (`weaponOptionsOf()`): unsaved-changes detection, undo steps, the simulation key and
@@ -69,7 +69,6 @@ touching one sets `auto: false`.
 This app: the weapon's **Options** popover (beside the fire mode) gains an "Incarnon evolutions" section for every
 weapon with evolutions:
 
-- a **Genesis** switch ("Genesis installed" / "not installed");
 - one **dropdown per evolution** (Evolution II-V): "No perk" and each perk by name, with its text under the name in the
   list (three lines) and in full under the dropdown once picked. Names are read from the descriptions ("Perk 1:
   Hunter's Mantra: ..."; where the data has no colon after the name, the name ends before the first word of the
@@ -78,12 +77,12 @@ weapon with evolutions:
   the site's default decides for this build right now, then Off and each stack count (or On). A short note explains
   Automatic.
 
-Every change is one undoable edit. The Options button's accessible name adds "Incarnon Genesis with 2 perks" or "no
-Incarnon Genesis". The popover scrolls inside 70% of the window height, so it fits at 1100x700.
+Every change is one undoable edit. The Options button's accessible name adds "2 Incarnon perks" (or "0 Incarnon
+perks"). There is no Genesis switch: it is always installed. The popover scrolls inside 70% of the window height, so it fits at 1100x700.
 
 ## 4. What perks do
 
-All of this applies only with the Genesis on, to the perks picked in evolutions 2-5.
+All of this applies to the perks picked in evolutions 2-5 (the Genesis is always installed).
 
 ### 4.1 Always-on perk stats (L28511-28700)
 
@@ -223,7 +222,7 @@ empty `activeConditionals` gives the same DPS (section 9), so the app keeps send
 
 On the site (L40029-40276):
 
-- **When**: the Genesis is on and at least one evolution has no perk. Picked perks are kept (locked).
+- **When**: the weapon has evolutions (the Genesis is always installed) and at least one has no perk. Picked perks are kept (locked).
 - **Step 2.7** (after the compositions, before the greedy fill): for each starting point, evolution by evolution, a
   locked perk stays; else the data's `headshot-priority` (with headshots on) or `priority` perk is taken without
   simulating; else every perk is scored (`runs(runs(20))` runs: the site scales the count twice) with the other
@@ -253,6 +252,11 @@ an empty evolution is not "nothing to fill".
 7. **Stug's blobs**: while checking parity, the Blob Explosion's radius came out smaller than the site's; the app now
    grows a stacking mode's radius toward `multishot_stack_max_range` with multishot, as the site does (no DPS change on
    one target).
+8. **The Genesis is always installed** (2026-10-25, at the user's request): every player of an Incarnon weapon has it,
+   so a switch was one more step for nothing. `build.incarnon` is null until a perk is picked (older builds compare
+   equal), the Options popover shows the evolutions straight away, and Auto build picks perks for empty evolutions on
+   every Incarnon weapon, as the site does with the Genesis on. The Genesis adds no stats itself, so DPS with no perk
+   picked is unchanged.
 
 ## 9. Parity with the live site
 
@@ -302,5 +306,5 @@ were off, so the DPS is the same.
   mode, magazine, two passes); the engine input for perk builds against captured site values (Braton Prime, Furis
   with stacks, Torid, Burston, Latron, Strun, Felarx); Deadhead; saved builds, content, undo and a weapon change;
   featured builds; a short real-engine Auto Build that picks perks.
-- `test/controller.test.js`: the Genesis, a perk and a conditional's stacks as undoable edits.
+- `test/controller.test.js`: a perk and a conditional's stacks as undoable edits.
 - `test/model.test.js`: the old "not simulated" note is gone.

@@ -11,7 +11,7 @@ import { actions } from '../controller.js';
 import { useApp, useDerived } from '../hooks.js';
 import { PROGENITOR_ELEMENTS, PROGENITOR_MAX, effectiveProgenitor } from '../../shared/stats.js';
 import { DEFAULT_EXALTED_STRENGTH, exaltedConfig, passiveControl, passiveValue, weaponPassives } from '../../shared/weapon-passives.js';
-import { incarnonActive, incarnonConditionals, incarnonEvolutions, incarnonFor } from '../../shared/incarnon.js';
+import { incarnonConditionals, incarnonEvolutions, incarnonFor } from '../../shared/incarnon.js';
 
 const useStyles = makeStyles({
   surface: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, width: '340px', maxWidth: 'calc(100vw - 32px)', maxHeight: '70vh', overflowY: 'auto' },
@@ -148,34 +148,26 @@ function PerkConditional({ def, state, own }) {
   );
 }
 
-/** The Incarnon Genesis switch, a perk per evolution and the picked perks' conditional parts. */
+/** A perk per evolution and the picked perks' conditional parts. The Genesis is always installed. */
 function IncarnonOptions({ weapon, build }) {
   const styles = useStyles();
   const ctx = useApp(s => s.ctx);
   const { stats } = useDerived();
-  const on = incarnonActive(build.incarnon);
   const evolutions = incarnonEvolutions(incarnonFor(ctx.data, weapon));
-  const defs = on ? incarnonConditionals(ctx.data, weapon, build.incarnon) : [];
+  const defs = incarnonConditionals(ctx.data, weapon, build.incarnon);
   const states = stats?.incarnon?.states ?? {};
   return (
     <>
       <Divider />
-      <Field label="Incarnon evolutions" hint="The Genesis turns the perks on. The Incarnon Form modes run either way.">
-        <Switch
-          checked={on}
-          label={on ? 'Genesis installed' : 'Genesis not installed'}
-          onChange={(_e, d) => actions.setIncarnonActive(d.checked)}
-          data-testid="incarnon-genesis"
-        />
-      </Field>
-      {on ? evolutions.map(evo => <PerkPicker key={evo.number} evolution={evo} picked={build.incarnon[`evolution_${evo.number}_perk`]} />) : null}
+      <Body1Strong as="h3" style={{ margin: 0 }}>Incarnon evolutions</Body1Strong>
+      {evolutions.map(evo => <PerkPicker key={evo.number} evolution={evo} picked={build.incarnon?.[`evolution_${evo.number}_perk`] ?? null} />)}
       {defs.length ? (
         <>
           <Caption1 className={styles.muted}>
             Conditional perks. Automatic is underframe.site's choice: on for a trigger the fight meets (On Kill, On Headshot), off
             for one it doesn't (While Aiming, On Equip), and as the stats allow (Critical Chance below 40%).
           </Caption1>
-          {defs.map(def => <PerkConditional key={def.id} def={def} state={states[def.id]} own={build.incarnon.conditionals?.[def.id]} />)}
+          {defs.map(def => <PerkConditional key={def.id} def={def} state={states[def.id]} own={build.incarnon?.conditionals?.[def.id]} />)}
         </>
       ) : null}
     </>
@@ -194,13 +186,12 @@ export function WeaponOptions() {
   const incarnon = weapon ? incarnonFor(ctx.data, weapon) : null;
   if (!weapon || (!progenitor && !exalted && !passives.length && !incarnon)) return null;
   const strength = build.exaltedStrength ?? DEFAULT_EXALTED_STRENGTH;
-  const installed = incarnonActive(build.incarnon);
-  const perks = installed ? incarnonEvolutions(incarnon).filter(e => build.incarnon[`evolution_${e.number}_perk`]).length : 0;
+  const perks = incarnon ? incarnonEvolutions(incarnon).filter(e => build.incarnon?.[`evolution_${e.number}_perk`]).length : 0;
   const summary = [
     progenitor ? `${progenitor.element} ${progenitor.value}%` : null,
     exalted ? `${strength}% strength` : null,
     passives.length ? `${passives.filter(e => passiveValue(build, e) > 0).length} of ${passives.length} passives on` : null,
-    incarnon ? (installed ? `Incarnon Genesis with ${perks} ${perks === 1 ? 'perk' : 'perks'}` : 'no Incarnon Genesis') : null,
+    incarnon ? `${perks} Incarnon ${perks === 1 ? 'perk' : 'perks'}` : null,
   ].filter(Boolean).join(', ');
   return (
     <Popover withArrow positioning="below-start" trapFocus>
