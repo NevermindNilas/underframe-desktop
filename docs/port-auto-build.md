@@ -776,15 +776,16 @@ The site never fills the Exilus slot. Users expect Auto build to, so the app add
 (7) and before the final arcane check (8), only when the Exilus slot is empty:
 
 - **Candidates**: the `exilus` pool, the allowed Exilus mods (`data.json.exilusMods`) that fit the weapon, add no
-  element and have a stat the simulation counts (`hasDpsStat`); and each auto-placed (not kept) Exilus mod in a
+  element and raise a stat the simulation counts (`hasDpsStat` with a positive value, so Vile Precision, whose fire
+  rate is a penalty, is never tried); and each auto-placed (not kept) Exilus mod in a
   general slot moved to the Exilus slot, with the freed slot filled again from the greedy pool. Cost Control, the
   elemental blacklist and the arcane's requirement apply as in the other steps.
 - **Choice**: every candidate and the build as it is, at `runs(30)`; the best is kept only when it scores higher.
 - **Log**: "Added <mod> to the Exilus slot", "Moved <mod> to the Exilus slot and added <mod>", or "Exilus slot: no
   Exilus mod adds damage to this build; left empty."
 - A build with every general slot kept and the arcane kept still runs, for the Exilus slot alone, when the pool has a
-  mod.
+  mod. The dialog's Run counts that too (`nothingToFill` with the data): for most guns the pool is empty, so a full
+  build still reads "nothing to fill".
 
-Few Exilus mods change simulated damage (as of 2026-10-25: Bhisaj-Bal on Paris Prime; Sinister Reach and Ruinous
-Extension, range; Vile Precision, whose fire rate is a penalty), so the slot usually stays empty, and the log says
-why. Most Exilus mods are utility (recoil, ammo, zoom, projectile speed) and the data has no stats for many of them.
+Few Exilus mods raise simulated damage (as of 2026-10-25: Bhisaj-Bal on Paris Prime; Sinister Reach and Ruinous
+Extension, range, for about 47 guns), so the slot usually stays empty, and the log says why. Most Exilus mods are utility (recoil, ammo, zoom, projectile speed) and the data has no stats for many of them.

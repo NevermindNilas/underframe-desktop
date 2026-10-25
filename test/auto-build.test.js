@@ -282,7 +282,16 @@ test('nothing to fill: every slot kept and the arcane kept; conditional mods are
   assert.equal(AB.nothingToFill({ mods, arcanes: [{ name: 'Primary Merciless' }] }, weapon, all, false), false, 'the arcane may be replaced');
   assert.equal(AB.nothingToFill({ mods, arcanes: [null] }, weapon, all, true), false, 'an empty arcane slot can be filled');
   assert.equal(AB.nothingToFill({ mods, arcanes: [{ name: 'Primary Merciless' }] }, weapon, new Set([0, 1]), true), false);
-  assert.deepEqual(AB.conditionalModStacks(data, mods), ['Galvanized Chamber at 5 stacks (On Kill)']);
+  // With the data: an evolution without a perk is something to do; Braton Prime's empty Exilus slot is not (no Exilus
+  // mod raises its damage), Amprex's is (Sinister Reach), until it is filled.
+  const full = { mods, arcanes: [{ name: 'Primary Merciless' }], incarnon: BRATON_PERKS };
+  assert.equal(AB.nothingToFill(full, weapon, all, true, data), true);
+  assert.equal(AB.nothingToFill({ ...full, incarnon: null }, weapon, all, true, data), false, 'perks to pick');
+  const amprex = ctx.weaponByName.get('Amprex');
+  const beam = { mods, arcanes: [{ name: 'Primary Merciless' }] };
+  assert.equal(AB.nothingToFill(beam, amprex, all, true, data), false, 'the Exilus slot can be tried');
+  assert.equal(AB.nothingToFill({ ...beam, mods: [...mods.slice(0, 8), { name: 'Sinister Reach', rank: 5 }] }, amprex, all, true, data), true);
+  assert.deepEqual(AB.conditionalModStacks(data, mods),['Galvanized Chamber at 5 stacks (On Kill)']);
   const lower = mods.map(m => (m?.name === 'Galvanized Chamber' ? { ...m, stacks: 2 } : m));
   assert.deepEqual(AB.conditionalModStacks(data, [...lower, { name: 'Laser Sight', rank: 3 }]), ['Galvanized Chamber at 2 stacks (On Kill)', 'Laser Sight on (On Headshot)']);
 });
@@ -290,18 +299,21 @@ test('nothing to fill: every slot kept and the arcane kept; conditional mods are
 // ---------- the search, with a fake scorer ----------
 
 test('an empty Exilus slot gets an Exilus mod only when it scores higher (not on the site)', { skip }, async () => {
-  const { env } = envFor({ finalRefinementEnabled: false }, { build: { incarnon: BRATON_PERKS } });
-  assert.deepEqual(env.pools.exilus.map(m => m['Local Name']), ['Vile Precision'], 'the only Exilus mod with a counted stat on Braton Prime');
+  // Only Exilus mods that raise a counted stat: Vile Precision (a fire rate penalty) never helps Braton Prime.
+  assert.deepEqual(envFor({}, { build: { incarnon: BRATON_PERKS } }).env.pools.exilus, []);
+  // Vile Precision is blacklisted here: this scorer rewards any mod, so it would be placed and then moved over.
+  const { env } = envFor({ finalRefinementEnabled: false, modBlacklist: [...real().data.blacklist, 'Vile Precision'] }, { weaponName: 'Amprex' });
+  assert.deepEqual(env.pools.exilus.map(m => m['Local Name']), ['Sinister Reach'], 'range, for a beam');
   const start = { mods: Array(9).fill(null), arcanes: [null] };
-  // A scorer that rewards every mod: Vile Precision goes in the Exilus slot.
+  // A scorer that rewards every mod: Sinister Reach goes in the Exilus slot.
   const rewarded = await AB.runAutoBuild(env, { start, score: fakeScorer() });
-  assert.equal(rewarded.mods[8]?.name, 'Vile Precision');
+  assert.equal(rewarded.mods[8]?.name, 'Sinister Reach');
   // Greedy fill may already have put it in a general slot (Exilus mods fit there too): then it is moved over.
-  assert.ok(rewarded.log.some(l => /(Added|Moved) Vile Precision to the Exilus slot/.test(l)), rewarded.log.join('\n'));
-  assert.equal(rewarded.mods.filter(m => m?.name === 'Vile Precision').length, 1);
-  // One that counts Vile Precision as a loss (its fire rate is a penalty): the slot stays empty, and the log says why.
-  const real = fakeScorer();
-  const penalised = async jobs => (await real(jobs)).map((v, i) => (jobs[i].mods[8] ? v - 5000 : v));
+  assert.ok(rewarded.log.some(l => /(Added|Moved) Sinister Reach to the Exilus slot/.test(l)), rewarded.log.join('\n'));
+  assert.equal(rewarded.mods.filter(m => m?.name === 'Sinister Reach').length, 1);
+  // One that counts the Exilus slot as a loss: the slot stays empty, and the log says why.
+  const base = fakeScorer();
+  const penalised = async jobs => (await base(jobs)).map((v, i) => (jobs[i].mods[8] ? v - 5000 : v));
   const kept = await AB.runAutoBuild(env, { start, score: penalised });
   assert.equal(kept.mods[8], null);
   assert.ok(kept.log.some(l => /no Exilus mod adds damage/.test(l)), kept.log.join('\n'));
@@ -309,7 +321,7 @@ test('an empty Exilus slot gets an Exilus mod only when it scores higher (not on
   const full = rewarded.mods.map((m, i) => (i === 8 ? null : m));
   const only = await AB.runAutoBuild(env, { start: { mods: full, arcanes: rewarded.arcanes }, score: fakeScorer() });
   assert.deepEqual(only.mods.slice(0, 8), full.slice(0, 8));
-  assert.equal(only.mods[8]?.name, 'Vile Precision');
+  assert.equal(only.mods[8]?.name, 'Sinister Reach');
   assert.equal(only.changed, true);
 });
 

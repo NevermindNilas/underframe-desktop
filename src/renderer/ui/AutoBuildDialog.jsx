@@ -333,7 +333,7 @@ function KeepPicker({ keep, setKeep, keepArcane, setKeepArcane }) {
         {empty || (arcane && !keepArcane) || !arcane
           ? `Ticked mods stay where they are; the others are replaced. ${empty} ${empty === 1 ? 'slot' : 'slots'} will be filled${arcane && !keepArcane ? ', and the arcane chosen again' : !arcane ? ', and an arcane picked' : ''}.`
           : 'Every slot is kept, so there is nothing to fill. Untick mods to let Auto build replace them.'}
-        {exilus ? ` ${exilus.name} stays in the Exilus slot, which Auto build never fills.` : ''}
+        {exilus ? ` ${exilus.name} stays in the Exilus slot: Auto build only tries an empty one.` : ''}
       </Caption1>
       <div className={styles.chips} role="group" aria-labelledby="auto-build-keep-heading">
         {filled.map(i => {
@@ -534,7 +534,7 @@ function RunPanel({ keep, setKeep, keepArcane, setKeepArcane }) {
       {dropped && !ab ? <Caption1 as="p" className={styles.line} data-testid="auto-build-dropped"><InfoRegular aria-hidden="true" /> The build changed, so the last result was dropped. Run again.</Caption1> : null}
       <Caption1 as="p" className={styles.muted}>
         Fills {weaponName}'s empty slots with the mods and arcane that score best against {targetLabel(enemy)}, with the {modeLabel(modeName)} fire mode
-        {buffs ? ', this build\'s external buffs and target statuses' : ''}. The Exilus slot is never filled.
+        {buffs ? ', this build\'s external buffs and target statuses' : ''}. An empty Exilus slot gets a mod only if one adds damage.
       </Caption1>
       <ul className={styles.summary} aria-label="Settings" data-testid="auto-build-summary">
         {settingsSummary(settings, simTime).map(l => <li key={l}><Body1>{l}</Body1></li>)}

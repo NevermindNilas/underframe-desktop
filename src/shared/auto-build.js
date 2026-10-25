@@ -72,6 +72,11 @@ export function hasDpsStat(mod) {
   });
 }
 
+/** A DPS stat with a positive value: an Exilus mod whose only counted stats are penalties (Vile Precision) never helps. */
+function gainsDpsStat(mod) {
+  return (mod?.Stats ?? []).some(s => Number(s?.Value) > 0 && hasDpsStat({ Stats: [s] }));
+}
+
 /** A mod that adds an element (not Impact, Puncture or Slash). */
 export function addsElement(mod) {
   return (mod?.Stats ?? []).some(s => s?.UpgradeType === ELEMENT_ADDED && DAMAGE_TYPE_BY_DT[s.DamageType] && !PHYSICAL.includes(DAMAGE_TYPE_BY_DT[s.DamageType]));
@@ -189,7 +194,8 @@ export function modAllowed(env, mod) {
 
 /**
  * The candidate pools (docs/port-auto-build.md 3.4-3.5), in data order: elemental (compositions), greedy (filling),
- * refinement (swaps), exilus (the Exilus slot: Exilus mods with a stat the simulation counts) and the arcanes for slot 0.
+ * refinement (swaps), exilus (the Exilus slot: Exilus mods that raise a stat the simulation counts) and the arcanes for
+ * slot 0.
  */
 export function candidatePools(env) {
   const { data, weapon } = env;
@@ -200,7 +206,7 @@ export function candidatePools(env) {
   const always = new Set(ALWAYS_GREEDY[weapon.type] ?? []);
   const greedy = allowed.filter(m => !elementalNames.has(m['Local Name']) && (hasDpsStat(m) || always.has(m['Local Name'])));
   const refinement = allowed.filter(m => m.Type === String(weapon.type).toUpperCase() && !env.exilus.has(m['Local Name']) && (hasDpsStat(m) || isAugment(m)));
-  const exilus = allowed.filter(m => env.exilus.has(m['Local Name']) && !elementalNames.has(m['Local Name']) && hasDpsStat(m));
+  const exilus = allowed.filter(m => env.exilus.has(m['Local Name']) && !elementalNames.has(m['Local Name']) && gainsDpsStat(m));
   const arcanes = arcaneSlotCount(weapon) ? arcanesFor(weapon, data, 0).map(a => a.name).filter(n => !env.blacklist.has(n)) : [];
   return { allowed, elemental, greedy, refinement, exilus, arcanes };
 }
@@ -589,7 +595,7 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   };
 
   /**
-   * 7.5 The Exilus slot, when empty (the site never fills it): each Exilus mod with a stat the simulation counts, and
+   * 7.5 The Exilus slot, when empty (the site never fills it): each Exilus mod that raises a stat the simulation counts, and
    * each auto-placed mod that may go there moved in with its general slot filled again. The best is kept when it scores
    * higher than the build as it is, at the same runs. Few Exilus mods change damage, so this is usually one check.
    */
@@ -948,12 +954,28 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
 
 /**
  * Whether a run would have nothing to do: every general slot filled and kept (`keep`: a Set of slot indexes), the
- * arcane filled and kept (or no arcane slot at all), and no Incarnon evolution waiting for a perk (with `data`).
+ * arcane filled and kept (or no arcane slot at all), and (with `data`) no Incarnon evolution waiting for a perk and no
+ * empty Exilus slot that an Exilus mod could fill (step 7.5; the run's blacklist may still rule them all out).
  */
 export function nothingToFill(build, weapon, keep, keepArcane, data = null) {
   const mods = GENERAL_SLOTS.every(i => build.mods?.[i] && keep.has(i));
   const arcane = !arcaneSlotCount(weapon) || (Boolean(build.arcanes?.[0]) && keepArcane);
-  return mods && arcane && !(data && autoEvolution(data, weapon, build.incarnon).shouldRun);
+  if (!mods || !arcane) return false;
+  if (!data) return true;
+  return !autoEvolution(data, weapon, build.incarnon).shouldRun && (Boolean(build.mods?.[EXILUS_SLOT]) || !exilusCandidates(data, weapon).length);
+}
+
+const exilusCache = new WeakMap();
+
+/** The Exilus mods that could change a gun's simulated damage (the exilus pool before the run's blacklist). */
+function exilusCandidates(data, weapon) {
+  let byWeapon = exilusCache.get(data);
+  if (!byWeapon) exilusCache.set(data, (byWeapon = new Map()));
+  if (!byWeapon.has(weapon)) {
+    const names = new Set(data.exilusMods ?? []);
+    byWeapon.set(weapon, (data.mods ?? []).filter(m => names.has(m['Local Name']) && fitsWeapon(m, weapon) && !addsElement(m) && gainsDpsStat(m)));
+  }
+  return byWeapon.get(weapon);
 }
 
 /**

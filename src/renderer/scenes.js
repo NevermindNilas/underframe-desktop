@@ -586,7 +586,9 @@ export async function runScenes(app) {
         await shot('36g-auto-build-default-locked', { wait: 600, expect: '[data-testid="auto-build-locked"]' });
         actions.selectAutoBuildConfig('your_config');
       }
-      // Every slot kept on the full build: nothing to fill, so Run is disabled and says why.
+      // Every slot kept on the full build: nothing to fill, so Run is disabled and says why. Braton Prime's evolutions
+      // get a perk each first: the Genesis is always installed, and an empty evolution is something to fill.
+      [2, 3, 4].forEach(e => actions.setIncarnonPerk(e, 1));
       openTab('Run');
       blur();
       await shot(tag('36k-auto-build-nothing-to-fill'), { wait: 600, expect: () => $('[data-testid="auto-build-run"]')?.getAttribute('aria-disabled') === 'true' });
