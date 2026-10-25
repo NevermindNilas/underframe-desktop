@@ -9,7 +9,7 @@ import { actions } from '../controller.js';
 import { useApp, useDerived } from '../hooks.js';
 import { fmtDate, fmtInt } from '../format.js';
 import { SIM_SEEDS, ttkText } from '../model.js';
-import { CREDIT_TEXT, DISCORD_URL, UNDERFRAME_URL, WHATS_SIMULATED } from './links.js';
+import { CREDIT_TEXT, DISCORD_URL, SOURCE_URL, UNDERFRAME_URL, WHATS_SIMULATED } from './links.js';
 
 export const SHORTCUTS = [
   ['Build', [
@@ -148,8 +148,8 @@ function AboutDialog() {
             <div>
               <Subtitle2 as="h3">Known limits</Subtitle2>
               <ul className={styles.list}>
-                <li><Body1>Guns only (primary and secondary weapons).</Body1></li>
-                <li><Body1>Weapon arcanes and rivens are simulated; conditional mods, incarnon bonuses and warframe arcanes that buff weapons are not yet.</Body1></li>
+                <li><Body1>Guns only (primary and secondary weapons, no kitguns).</Body1></li>
+                <li><Body1>Incarnon evolutions aren't simulated.</Body1></li>
                 <li><Body1>Screenshot import needs an English game client and reads mods by their printed names.</Body1></li>
 
               </ul>
@@ -159,6 +159,8 @@ function AboutDialog() {
               <Link onClick={() => actions.openExternal(UNDERFRAME_URL)}>underframe.site</Link>
               {' · '}
               <Link onClick={() => actions.openExternal(DISCORD_URL)}>Discord</Link>
+              {' · '}
+              <Link onClick={() => actions.openExternal(SOURCE_URL)}>Source code</Link>
             </Body1>
           </DialogContent>
           <DialogActions>

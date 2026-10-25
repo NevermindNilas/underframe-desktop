@@ -2,7 +2,7 @@
 
 Status: **current**. It replaces the window layout of `docs/arsenal-spec.md` (sections 2, 3, 5.1, 8 and parts of 4) and of `docs/ux-spec.md` (sections 2, 3.2, 4.3, 4.9-4.13). Those sections carry a "Superseded" note pointing here. Everything this spec does not mention still holds: the search grammar, drag and drop, the screenshot import, the slot keyboard model, the accessibility rules and the copy rules.
 
-Inputs: the two independent reviews `docs/declutter-flow.md` (task flow and information architecture) and `docs/declutter-calm.md` (visual density and calm), written in answer to this feedback:
+Inputs: two independent reviews, one of the task flow and information architecture, one of visual density and calm (working notes, not kept in the repository), written in answer to this feedback:
 
 > "the screen feels so clutterred, the user is bombarded in every direction and the core stuff that you actually care about like weapon stats get cut away."
 

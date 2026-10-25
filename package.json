@@ -1,7 +1,7 @@
 {
   "name": "underframe-desktop",
   "productName": "Underframe Desktop",
-  "version": "0.1.0",
+  "version": "2026.10.25",
   "description": "Desktop build planner and damage simulator for Warframe, powered by the Underframe engine.",
   "license": "AGPL-3.0-only",
   "type": "module",

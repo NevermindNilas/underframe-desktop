@@ -5,6 +5,19 @@ damage. It is a friendlier front end for [Underframe](https://www.underframe.sit
 and runs Underframe's damage engine locally, used with the Underframe
 developer's permission.
 
+## Download
+
+Get the latest version from the [Releases page](https://github.com/NevermindNilas/underframe-desktop/releases/latest):
+
+- `Underframe Desktop Setup <version>.exe`: the installer (you can pick the folder; Start menu and desktop shortcuts)
+- `Underframe Desktop <version>.exe`: the portable app, which runs without installing
+
+Windows 10 or 11, 64-bit. The app isn't code-signed, so Windows SmartScreen may warn the first time you run
+it: choose **More info**, then **Run anyway**. Everything runs on your PC: builds and rivens are saved
+locally, and screenshots are read with Windows' own text recognition, never uploaded.
+
+Versions are named by their release date (`2026.10.25`).
+
 ## Features
 
 - Build library: save, rename, annotate and reopen builds
@@ -30,16 +43,18 @@ developer's permission.
 - Compare tray for side-by-side builds
 - Best-mod sweep: tries candidate mods in a slot and ranks them in the gallery
 
-## Requirements
+## Building from source
+
+Requirements:
 
 - Node.js 22+ and npm
 - Windows to build the installer (`npm run dist`)
 - Access to the private `core` submodule to run the engine (see below)
 
-## Getting started
+### Getting started
 
 ```sh
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules https://github.com/NevermindNilas/underframe-desktop.git
 cd underframe-desktop
 npm install
 npm start
@@ -50,7 +65,7 @@ access, the clone succeeds but `core/` stays empty: you can still read and
 modify the UI, main process and shared logic, and `npm test` covers pure logic
 that does not need the engine, but the app cannot load data or run simulations.
 
-## Scripts
+### Scripts
 
 | Command | What it does |
 | --- | --- |
