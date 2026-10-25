@@ -1093,6 +1093,10 @@ async function checkRiven(app, errors, checks) {
   if (!(await waitFor(() => dialog.contains(document.activeElement), 1500))) errors.push(`riven: the dialog opened with focus on ${testIdOfFocus()}`);
   await checkDialogLayout(dialog, 'riven', errors, checks);
   if (!dialog.querySelector('[data-testid="riven-polarity"]')) errors.push('riven: the dialog has no polarity picker');
+  // While picking, capacity may share the weapon's line: its tools must stay inside the Loadout.
+  const tools = $('[data-testid="build-tools"]')?.getBoundingClientRect();
+  const pane = $('[data-pane="loadout"]')?.getBoundingClientRect();
+  if (tools && pane && tools.right > pane.right + 1) errors.push(`capacity: the tools spill ${Math.round(tools.right - pane.right)} px out of the Loadout while picking`);
   await capture(uf, 'riven-dialog', errors);
   await uf.smokePress('Escape');
   if (!(await waitFor(() => !$('[data-testid="riven-dialog"]'), 2000))) errors.push('riven: Esc did not close the dialog');

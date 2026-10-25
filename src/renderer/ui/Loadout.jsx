@@ -46,7 +46,9 @@ const useStyles = makeStyles({
   spacer: { flexGrow: 1 },
   visuallyHidden: { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' },
   capacity: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM, minHeight: '28px', minWidth: 0 },
-  capacityCompact: { flexGrow: 1, maxWidth: '360px', minWidth: '240px', marginLeft: 'auto' },
+  // On the weapon's line it is never narrower than its content (the meter's least width and the tools), so the line
+  // wraps instead of the tools spilling into the Readout.
+  capacityCompact: { flexGrow: 1, maxWidth: '640px', minWidth: 'max-content', marginLeft: 'auto' },
   meterLabel: { color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap' },
   tools: { padding: 0, flexShrink: 0, gap: '2px' },
   track: {
