@@ -1,7 +1,8 @@
 // Auto Build (docs/port-auto-build.md 3-4): underframe.site's build optimizer, in our own code. A staged heuristic:
 // an arcane pre-pass, the elemental compositions that reach each target element mix, a greedy fill of the remaining
 // slots from each composition, the top 3 re-scored with their arcane re-optimised, a local "final refinement" on the
-// winner, a final arcane check and two swaps made without simulating.
+// winner, a final arcane check and two swaps made without simulating. With the Incarnon Genesis installed and an
+// evolution without a perk, the perks are chosen too (steps 2.7 and 4.3, docs/port-incarnon.md).
 //
 // Pure: the engine is behind an injected `score(jobs)` (a pool of engine workers in the app, the engine itself or a
 // fake in tests). `createAutoBuildEnv()` holds what every candidate shares (weapon, target, buffs, pools), and
@@ -20,6 +21,7 @@ import { baseModeName, combinedModes, modesFired, resolveModeId } from './fire-m
 import { resolveWeaponPassives } from './weapon-passives.js';
 import { capacityOf, effectiveSlotPolarities, innateSlotPolarities, normalizePolarity, slotDrain } from './capacity.js';
 import { rivenCapacityMod, rivenPolarity } from './rivens.js';
+import { incarnonActive, incarnonEvolutions, incarnonFor, withPerk } from './incarnon.js';
 import {
   ELEMENT_PRESETS, blockedByElementalBlacklist, metricOf, modStatFamilies, parseTargetList, runsFor, targetLabel,
 } from './auto-build-settings.js';
@@ -132,6 +134,10 @@ export function createAutoBuildEnv({ data, weapon, reload = null, build, enemy, 
     // Statuses already on the target: a Cold status lets Primary Frostbite build stacks (as on the site).
     externalStatuses: mergeStatuses(build.externalStatuses ?? [], passives.statuses),
     progenitor: effectiveProgenitor(weapon, build.progenitor),
+    // The build's Incarnon perks; their conditional defaults read the pick and the buffs, as in the Readout.
+    incarnon: build.incarnon ?? null,
+    incarnonContext: { modeId: modeName, customFireModes: combinedModes(data, weapon), buffs: build.externalBuffs ?? [] },
+    evolution: autoEvolution(data, weapon, build.incarnon),
     settings,
     metric: metricOf(settings),
     exilus: new Set(data.exilusMods ?? []),
@@ -147,6 +153,16 @@ export function createAutoBuildEnv({ data, weapon, reload = null, build, enemy, 
   env.blacklist = runBlacklist(settings, { headshot: Boolean(enemy?.headshot) });
   env.pools = candidatePools(env);
   return env;
+}
+
+/**
+ * Whether the run picks Incarnon perks (the Genesis is installed and an evolution has none), the weapon's evolutions,
+ * and the perks the build already has (kept).
+ */
+export function autoEvolution(data, weapon, incarnon) {
+  const evolutions = incarnonActive(incarnon) ? incarnonEvolutions(incarnonFor(data, weapon)) : [];
+  const locked = new Map(evolutions.filter(e => incarnon[`evolution_${e.number}_perk`]).map(e => [e.number, incarnon[`evolution_${e.number}_perk`]]));
+  return { shouldRun: evolutions.length > locked.size, evolutions, locked };
 }
 
 /** The run's blacklist: the user's (when on) plus Riven Mod, and the headshot-only items when headshots are off. */
@@ -226,14 +242,15 @@ function mergeStatuses(a, b) {
   return out;
 }
 
-/** The selected mode's final damage types with the build's buffs (what element-gated arcanes need). */
-function finalTypes(env, mods) {
-  const key = modsKey(mods);
+/** The selected mode's final damage types with the build's buffs and perks (what element-gated arcanes need). */
+function finalTypes(env, mods, incarnon = env.incarnon) {
+  const key = `${modsKey(mods)}${incarnonKey(incarnon)}`;
   const hit = env.caches.types.get(key);
   if (hit) return hit;
   const { modes } = computeWeaponStats(env.weapon, mods, {
     modsByName: env.index.byName, reload: env.reload, targetFaction: env.enemy.faction, arcanes: null, external: env.external,
     externalStatuses: env.externalStatuses, conditionals: conditionalsFor(env, mods), progenitor: env.progenitor, data: env.data,
+    incarnon, incarnonContext: env.incarnonContext,
   });
   const types = (modes.find(x => x.mode_name === env.baseModeName) ?? modes[0])?.finalDamageTypes ?? {};
   if (env.caches.types.size > 20000) env.caches.types.clear();
@@ -245,9 +262,9 @@ function finalTypes(env, mods) {
  * Whether an arcane does something on these mods: element-gated arcanes need their element in the final damage types,
  * or (Primary Frostbite) a Cold status already on the target, the live readout's rule.
  */
-export function arcaneEligible(env, name, mods) {
+export function arcaneEligible(env, name, mods, incarnon = env.incarnon) {
   if (arcaneRequirementMet(name, null, null) || arcaneRequirementMet(name, null, env.externalStatuses)) return true;
-  return arcaneRequirementMet(name, finalTypes(env, mods), env.externalStatuses);
+  return arcaneRequirementMet(name, finalTypes(env, mods, incarnon), env.externalStatuses);
 }
 
 /**
@@ -395,9 +412,11 @@ export function candidateInput(env, cand, { maxTime, appStateRef = 1, plain = fa
   const arcanes = resolveArcanes(cand.arcanes ?? [], env.weapon, env.data);
   // Conditional mods count at the stacks their slot assumes: max for a candidate, as underframe.site scores them.
   const conditionals = conditionalsFor(env, cand.mods);
-  const { modes } = computeWeaponStats(env.weapon, cand.mods, {
+  // A candidate's own perks (Auto build trying them), else the build's.
+  const { modes, incarnon } = computeWeaponStats(env.weapon, cand.mods, {
     modsByName: env.index.byName, reload: env.reload, targetFaction: env.enemy.faction, arcanes, external: env.external,
     externalStatuses: env.externalStatuses, conditionals, progenitor: env.progenitor, data: env.data,
+    incarnon: cand.incarnon !== undefined ? cand.incarnon : env.incarnon, incarnonContext: env.incarnonContext,
   });
   let weaponStats = modes;
   const s = env.settings;
@@ -406,7 +425,7 @@ export function candidateInput(env, cand, { maxTime, appStateRef = 1, plain = fa
   const input = buildEngineInput({
     weapon: env.weapon, modSlots: cand.mods, weaponStats, enemy: env.enemy, modeName: env.modeName, customFireModes: env.customFireModes,
     maxTime: maxTime ?? s.simulationTimeSeconds, appStateRef, reload: env.reload, debugLog: false, arcanes, external: env.external,
-    externalStatuses: env.externalStatuses, conditionals,
+    externalStatuses: env.externalStatuses, conditionals, incarnon,
   });
   if (!plain && s.buildForSingleHit) input.simulationParams.forceSingleShot = true;
   return JSON.stringify(input);
@@ -417,6 +436,7 @@ export function candidateInput(env, cand, { maxTime, appStateRef = 1, plain = fa
 // A riven is its rolls (every riven of a family has the same name).
 const slotKey = s => (s.isRiven ? `riven:${s.disposition}:${s.rank}:${(s.stats ?? []).map(x => `${x.name}=${x.value}`).join('|')}` : `${s.name}:${s.rank}${s.stacks != null ? `x${s.stacks}` : ''}`);
 const modsKey = mods => mods.map(s => (s ? slotKey(s) : '')).join(',');
+const incarnonKey = incarnon => (incarnonActive(incarnon) ? `|${JSON.stringify(incarnon)}` : '');
 const namesIn = mods => mods.filter(Boolean).map(s => s.name);
 const fmt = n => (Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '—');
 const permutations = list => (list.length <= 1 ? [list] : list.flatMap((x, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map(p => [x, ...p])));
@@ -469,7 +489,7 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
     if (!cands.length) return [];
     const seeds = seedsFor(n);
     totalRuns += cands.length * n;
-    const out = await score(cands.map(c => ({ mods: c.mods, arcanes: c.arcanes, seeds })));
+    const out = await score(cands.map(c => ({ mods: c.mods, arcanes: c.arcanes, ...(c.incarnon !== undefined ? { incarnon: c.incarnon } : {}), seeds })));
     checkCancel();
     return out.map(v => (Number.isFinite(v) ? v : NaN));
   };
@@ -515,12 +535,14 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   const emptySlots = GENERAL_SLOTS.filter(i => !startMods[i]);
   const arcaneLocked = arcaneSlots === 0 || Boolean(startArcanes[0]);
   const arcaneNames = arcaneLocked ? [] : env.pools.arcanes;
-  const withArcane = (cand, name) => ({ mods: cand.mods, arcanes: startArcanes.map((a, i) => (i === 0 ? (name ? arcaneEntryFor(env.data, name) : null) : a)) });
+  const withArcane = (cand, name) => ({ ...cand, arcanes: startArcanes.map((a, i) => (i === 0 ? (name ? arcaneEntryFor(env.data, name) : null) : a)) });
+  const eligible = (name, cand) => arcaneEligible(env, name, cand.mods, cand.incarnon);
   const arcaneOf = cand => cand.arcanes?.[0]?.name ?? null;
   progress(0, 'Initializing', `${emptySlots.length} empty ${emptySlots.length === 1 ? 'slot' : 'slots'} to fill${arcaneLocked ? '' : ' and the arcane slot'}.`);
 
-  let base = { mods: startMods, arcanes: startArcanes };
-  if (!emptySlots.length && arcaneLocked) {
+  // A candidate carries its Incarnon perks: the build's, and those the run picks for empty evolutions.
+  let base = { mods: startMods, arcanes: startArcanes, incarnon: env.incarnon };
+  if (!emptySlots.length && arcaneLocked && !env.evolution.shouldRun) {
     progress(100, 'Done', 'Nothing to fill: every mod slot is kept and the arcane slot is filled.');
     return { ...base, score: NaN, metric: env.metric, runs: 0, stoppedEarly: false, log, changed: false };
   }
@@ -531,10 +553,10 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   if (arcaneLocked) progress(5, 'Step 1.5: Arcane', arcaneSlots ? `Existing arcane (${arcaneOf(base)}) kept; skipping optimization.` : 'No arcane slot; skipping.');
   else if (arcaneNames.length) {
     progress(5, 'Step 1.5: Arcane (10 samples)', `Testing ${arcaneNames.length} arcanes...`);
-    const eligible = arcaneNames.filter(n => arcaneEligible(env, n, base.mods));
-    const scores = await evaluate([base, ...eligible.map(n => withArcane(base, n))], 10);
+    const usable = arcaneNames.filter(n => eligible(n, base));
+    const scores = await evaluate([base, ...usable.map(n => withArcane(base, n))], 10);
     const baseline = scores[0];
-    ranked = eligible.map((n, i) => ({ name: n, score: scores[i + 1] })).filter(r => Number.isFinite(r.score)).sort((a, b) => b.score - a.score);
+    ranked = usable.map((n, i) => ({ name: n, score: scores[i + 1] })).filter(r => Number.isFinite(r.score)).sort((a, b) => b.score - a.score);
     if (ranked[0] && (!Number.isFinite(baseline) || ranked[0].score > baseline)) {
       chosenArcane = ranked[0].name;
       progress(null, null, `Selected ${chosenArcane} (${fmt(ranked[0].score)}).`);
@@ -544,8 +566,8 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   const fallback = cand => {
     if (arcaneLocked) return cand;
     const current = arcaneOf(cand);
-    if (current && arcaneEligible(env, current, cand.mods)) return cand;
-    const next = ranked.find(r => arcaneEligible(env, r.name, cand.mods))?.name ?? null;
+    if (current && eligible(current, cand)) return cand;
+    const next = ranked.find(r => eligible(r.name, cand))?.name ?? null;
     return next === current ? cand : withArcane(cand, next);
   };
   if (!arcaneLocked) base = withArcane(base, chosenArcane);
@@ -554,7 +576,7 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
     const mods = cand.mods.slice();
     const free = GENERAL_SLOTS.filter(i => !mods[i]);
     list.forEach((m, i) => { mods[free[i]] = m; });
-    return { mods, arcanes: cand.arcanes };
+    return { ...cand, mods };
   };
 
   /** Fill empty general slots one at a time with the best greedy candidate (runs(b) per try). */
@@ -574,14 +596,14 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
           const mods = cur.mods.slice();
           mods[slot] = { name, rank };
           if (!fits(mods) || blocked(mods)) continue;
-          tries.push({ mods, arcanes: cur.arcanes, name });
+          tries.push({ ...cur, mods, name });
         }
       }
       if (!tries.length) break;
       const scores = await evaluate(tries, runs(b));
       const i = argmax(scores);
       if (i < 0) break;
-      cur = { mods: tries[i].mods, arcanes: cur.arcanes };
+      cur = { ...cur, mods: tries[i].mods };
       last = scores[i];
       progress(null, null, `${label}: added ${tries[i].name} (${fmt(scores[i])}).`);
     }
@@ -673,6 +695,46 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   }
   if (!bases.length) bases.push({ name: 'No Element', cand: base, target: pure });
 
+  /**
+   * Incarnon perks (the site's evolution steps): each evolution without a kept perk takes its data priority (the
+   * headshot one with headshots on), else the perk that scores best with the others as they are, evolution by
+   * evolution. `final` re-scores the result (step 4.3). Runs are scaled twice, as on the site.
+   */
+  const pickPerks = async (cand, final = false) => {
+    const n = runs(runs(20));
+    let incarnon = cand.incarnon;
+    let latest = null;
+    for (const evo of env.evolution.evolutions) {
+      checkCancel();
+      const set = p => withPerk(env.data, env.weapon, incarnon, evo.number, p);
+      if (env.evolution.locked.has(evo.number)) { incarnon = set(env.evolution.locked.get(evo.number)); continue; }
+      if (!evo.perks.length) { incarnon = set(null); continue; }
+      const numbers = evo.perks.map(p => p.number);
+      const priority = [env.enemy.headshot ? evo.headshotPriority : null, evo.priority].find(p => p && numbers.includes(p));
+      if (priority) { incarnon = set(priority); continue; }
+      const tries = numbers.map(p => ({ ...cand, incarnon: set(p) }));
+      const scores = await evaluate(tries, n);
+      let best = -1;
+      scores.forEach((v, i) => { if (Number.isFinite(v) && (best < 0 || v > scores[best])) best = i; });
+      incarnon = tries[Math.max(0, best)].incarnon;
+      if (best >= 0) latest = scores[best];
+    }
+    const next = { ...cand, incarnon };
+    return { cand: next, score: latest == null || final ? await one(next, n) : latest };
+  };
+  const perkCount = cand => env.evolution.evolutions.filter(e => !env.evolution.locked.has(e.number) && cand.incarnon?.[`evolution_${e.number}_perk`]).length;
+
+  // 2.7 Incarnon perks for every starting point.
+  if (env.evolution.shouldRun && !timeUp()) {
+    progress(33, `Step 2.7: Evolution optimization (${runs(runs(20))} samples)`, `Evaluating ${bases.length} candidates...`);
+    for (const b of bases) {
+      if (timeUp()) break;
+      b.cand = (await pickPerks(b.cand)).cand;
+      const k = perkCount(b.cand);
+      progress(null, null, `${b.name}: ${k ? `picked ${k} ${k === 1 ? 'perk' : 'perks'}` : 'no changes needed'}.`);
+    }
+  }
+
   // 3. Greedy fill from every starting point.
   const filled = [];
   for (let i = 0; i < bases.length; i++) {
@@ -695,20 +757,20 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   let top = filled.slice().sort(byScore).slice(0, 3);
   const optimizeArcane = async (cand, current, perArcane, finalRuns) => {
     if (arcaneLocked || !arcaneNames.length) return { cand, score: current };
-    const eligible = arcaneNames.filter(n => arcaneEligible(env, n, cand.mods));
-    const scores = await evaluate([cand, ...eligible.map(n => withArcane(cand, n))], perArcane);
+    const usable = arcaneNames.filter(n => eligible(n, cand));
+    const scores = await evaluate([cand, ...usable.map(n => withArcane(cand, n))], perArcane);
     const i = argmax(scores.slice(1));
     if (i < 0 || !(scores[i + 1] > scores[0])) {
       progress(null, null, 'No better arcane found.');
       return { cand, score: current };
     }
-    const next = withArcane(cand, eligible[i]);
+    const next = withArcane(cand, usable[i]);
     const s2 = await one(next, finalRuns);
     if (Number.isFinite(s2) && (!Number.isFinite(current) || s2 > current)) {
-      progress(null, null, `Selected ${eligible[i]} (${fmt(s2)}, +${fmt(s2 - current)}).`);
+      progress(null, null, `Selected ${usable[i]} (${fmt(s2)}, +${fmt(s2 - current)}).`);
       return { cand: next, score: s2 };
     }
-    progress(null, null, `${eligible[i]} tested; keeping ${arcaneOf(cand) ?? 'no arcane'}.`);
+    progress(null, null, `${usable[i]} tested; keeping ${arcaneOf(cand) ?? 'no arcane'}.`);
     return { cand, score: current };
   };
   if (!stoppedEarly) {
@@ -721,6 +783,17 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
     if (!stoppedEarly) {
       const scores = await evaluate(refilled.map(t => t.cand), runs(50));
       top = refilled.map((t, i) => ({ ...t, score: Number.isFinite(scores[i]) ? scores[i] : t.score }));
+      // 4.3 The perks again, on the filled builds, and their score.
+      if (env.evolution.shouldRun) {
+        progress(81, `Step 4.3: Evolution re-evaluation (${runs(runs(20))} samples)`, `Re-testing ${top.length} candidates...`);
+        for (let i = 0; i < top.length; i++) {
+          if (timeUp()) break;
+          const r = await pickPerks(top[i].cand, true);
+          top[i] = { ...top[i], cand: r.cand, score: Number.isFinite(r.score) ? r.score : top[i].score };
+          progress(null, null, `${top[i].name}: evolution perks updated.`);
+        }
+        top.sort(byScore);
+      }
       for (let i = 0; i < top.length; i++) {
         if (timeUp()) break;
         progress(87 + Math.round((8 * i) / top.length), `Step 5: Arcane for ${top[i].name} (${runs(30)} samples)`);
@@ -748,7 +821,7 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
       if (timeUp()) break;
       const swappable = GENERAL_SLOTS.filter(i => cur.mods[i] && !locked.has(i));
       if (!swappable.length) { progress(null, null, 'No auto-slotted mods to refine. Finalizing.'); break; }
-      const without = swappable.map(i => ({ i, cand: { mods: cur.mods.map((m, j) => (j === i ? null : m)), arcanes: cur.arcanes } }));
+      const without = swappable.map(i => ({ i, cand: { ...cur, mods: cur.mods.map((m, j) => (j === i ? null : m)) } }));
       const removal = await evaluate(without.map(w => w.cand), n);
       const w = argmax(removal);
       if (w < 0 || timeUp()) break;
@@ -765,8 +838,8 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
           if (!fits(mods) || blocked(mods)) continue;
           if (restrict && sig(mods) !== sig(cur.mods)) continue;
           const arcane = arcaneOf(cur);
-          if (arcane && !arcaneEligible(env, arcane, mods)) continue;
-          tries.push({ mods, arcanes: cur.arcanes, name, rank });
+          if (arcane && !arcaneEligible(env, arcane, mods, cur.incarnon)) continue;
+          tries.push({ ...cur, mods, name, rank });
         }
       }
       const scores = await evaluate(tries, n);
@@ -776,7 +849,7 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
         break;
       }
       progress(null, null, `Swapped ${removed} for ${tries[i].name}. ${fmt(bestScore)} -> ${fmt(scores[i])}.`);
-      cur = { mods: tries[i].mods, arcanes: cur.arcanes };
+      cur = { ...cur, mods: tries[i].mods };
       bestScore = scores[i];
     }
     const after = fallback(cur);
@@ -799,19 +872,21 @@ export async function runAutoBuild(env, { start, score, signal = null, deadline 
   cur = qualityOfLifeSwaps(env, cur, locked, { fits, blocked, onSwap: text => progress(null, null, text) });
 
   if (blocked(cur.mods)) throw new Error('The final build was rejected by the elemental blacklist.');
-  const changed = modsKey(cur.mods) !== modsKey(startMods) || arcaneOf(cur) !== (startArcanes[0]?.name ?? null);
+  const incarnon = cur.incarnon ?? null;
+  const perksChanged = incarnonKey(incarnon) !== incarnonKey(env.incarnon);
+  const changed = modsKey(cur.mods) !== modsKey(startMods) || arcaneOf(cur) !== (startArcanes[0]?.name ?? null) || perksChanged;
   progress(100, 'Done', `Finished. Best ${env.metric === 'avgDps' ? 'DPS' : 'score'}: ${fmt(bestScore)}.`);
-  return { mods: cur.mods, arcanes: cur.arcanes, score: bestScore, metric: env.metric, runs: totalRuns, stoppedEarly, log, changed };
+  return { mods: cur.mods, arcanes: cur.arcanes, incarnon, score: bestScore, metric: env.metric, runs: totalRuns, stoppedEarly, log, changed };
 }
 
 /**
- * Whether a run would have nothing to do: every general slot filled and kept (`keep`: a Set of slot indexes), and the
- * arcane filled and kept, or no arcane slot at all.
+ * Whether a run would have nothing to do: every general slot filled and kept (`keep`: a Set of slot indexes), the
+ * arcane filled and kept (or no arcane slot at all), and no Incarnon evolution waiting for a perk (with `data`).
  */
-export function nothingToFill(build, weapon, keep, keepArcane) {
+export function nothingToFill(build, weapon, keep, keepArcane, data = null) {
   const mods = GENERAL_SLOTS.every(i => build.mods?.[i] && keep.has(i));
   const arcane = !arcaneSlotCount(weapon) || (Boolean(build.arcanes?.[0]) && keepArcane);
-  return mods && arcane;
+  return mods && arcane && !(data && autoEvolution(data, weapon, build.incarnon).shouldRun);
 }
 
 /**
@@ -865,7 +940,7 @@ export function qualityOfLifeSwaps(env, cand, locked, { fits = () => true, block
     if (plain) trySwap(slot, plain['Local Name']);
   }
   if (swaps.length) onSwap(`Swapped: ${swaps.join(', ')}.`);
-  return { mods, arcanes: cand.arcanes };
+  return { ...cand, mods };
 }
 
 /** The mod on `mods` (slot objects) that `name` conflicts with (itself, or an incompatible one), or null. */

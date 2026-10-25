@@ -9,6 +9,7 @@ import { maxRank, conflictingMod } from '../shared/mods.js';
 import { arcaneControls, arcaneMaxRank, isArcaneCompatible } from '../shared/arcanes.js';
 import { withModStacks } from '../shared/conditional-mods.js';
 import { effectiveProgenitor } from '../shared/stats.js';
+import { normalizeIncarnon, withConditional, withPerk } from '../shared/incarnon.js';
 import * as X from '../shared/external-buffs.js';
 import * as RV from '../shared/rivens.js';
 import { createCardAssets, loadCardAssets } from '../shared/card-assets.js';
@@ -1111,6 +1112,31 @@ export const actions = {
       return { ...b, passives: { ...(b.passives ?? {}), [name]: cleaned[name] } };
     });
   },
+  // ---- Incarnon evolutions (incarnon.js): the Genesis, a perk per evolution, conditional perk stacks ----
+  /** Install or remove the Incarnon Genesis; removing it clears the perks, as on the site. */
+  setIncarnonActive(on) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const next = on ? normalizeIncarnon(ctx.data, ctx.weaponByName.get(b.weaponName), { ...(b.incarnon ?? {}), evolution_1_active: true }) : null;
+      return JSON.stringify(next) === JSON.stringify(b.incarnon ?? null) ? b : { ...b, incarnon: next };
+    });
+  },
+  /** An evolution's perk (a number; null or 0 clears it). */
+  setIncarnonPerk(evolution, perk) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const next = withPerk(ctx.data, ctx.weaponByName.get(b.weaponName), b.incarnon, evolution, perk);
+      return JSON.stringify(next) === JSON.stringify(b.incarnon ?? null) ? b : { ...b, incarnon: next };
+    });
+  },
+  /** A conditional perk stat's stacks (0 is off), or null for the site's automatic default. */
+  setIncarnonConditional(id, stacks) {
+    const { ctx } = store.get();
+    updateBuild(b => {
+      const next = withConditional(ctx.data, ctx.weaponByName.get(b.weaponName), b.incarnon, id, stacks);
+      return JSON.stringify(next) === JSON.stringify(b.incarnon ?? null) ? b : { ...b, incarnon: next };
+    });
+  },
 
   /** Equip a mod (rank defaults to max). Returns false and explains when it cannot go in that slot. */
   equipMod(slot, name, rank, { focus = true, quiet = false } = {}) {
@@ -1794,6 +1820,8 @@ export const actions = {
     // A kept riven comes back whole (its stats are the slot).
     let next = { ...s.build, mods: r.mods.map(m => (m?.isRiven ? m : m ? { name: m.name, rank: m.rank, ...(m.stacks != null ? { stacks: m.stacks } : {}) } : null)) };
     (r.arcanes ?? []).forEach((a, i) => { next = M.setArcane(s.ctx, next, i, a ?? null); });
+    // The Incarnon perks it picked (with their conditional parts on), when the build had evolutions without one.
+    if (r.incarnon !== undefined) next = { ...next, incarnon: r.incarnon };
     // Cost Control's Forma plan: the slot polarities that make the result fit, in the same undo step.
     next = M.withFormaPlan(s.ctx, next, r.formaPlan);
     commitBuild(next);

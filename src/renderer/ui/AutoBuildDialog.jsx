@@ -25,6 +25,7 @@ import { EXILUS_SLOT, GENERAL_SLOTS, buildCapacity, formaPlanText, slotLabel, ta
 import * as AS from '../../shared/auto-build-settings.js';
 import { arcaneSummary, arcaneSupport, indexArcanes, isArcaneCompatible } from '../../shared/arcanes.js';
 import { nothingToFill } from '../../shared/auto-build.js';
+import { incarnonSummary } from '../../shared/incarnon.js';
 import { isModCompatible, maxRank } from '../../shared/mods.js';
 import { RIVEN_MAX_RANK, isRiven, rivenShortName } from '../../shared/rivens.js';
 import { modeLabel } from '../../shared/fire-modes.js';
@@ -432,6 +433,10 @@ function ResultView() {
   const partial = r.mods.filter(Boolean).map(m => ({ name: m.name, stats: unmodeledStats(ctx, m.name) })).filter(x => x.stats.length);
   const arcaneNote = b0 && arcaneSupport(b0.name, ctx.data).level !== 'full' ? b0.name : null;
   const conditional = r.conditionalMods ?? [];
+  // Incarnon perks it picked for evolutions that had none (the kept ones are left out).
+  const weapon = ctx.weaponByName.get(build.weaponName);
+  const keptPerks = new Set(incarnonSummary(ctx.data, weapon, build.incarnon));
+  const perks = r.incarnon !== undefined ? incarnonSummary(ctx.data, weapon, r.incarnon).filter(p => !keptPerks.has(p)) : [];
   const nothing = !r.runs;
   return (
     <section className={styles.section} aria-labelledby="auto-build-result-heading" data-testid="auto-build-result">
@@ -470,7 +475,7 @@ function ResultView() {
       ) : null}
       {r.stoppedEarly ? <Caption1 as="p" className={styles.line} data-testid="auto-build-stopped"><InfoRegular aria-hidden="true" /> Stopped at the {fmtLimit(r.settings.timeLimitSeconds)} limit: this is the best build found so far.</Caption1> : null}
       {!nothing && !r.changed ? <Body1 as="p" className={styles.muted}>Auto build found nothing better than the current build.</Body1> : null}
-      {r.changed ? (
+      {r.changed && changes.length ? (
         <>
           <Subtitle2 as="h4" className={styles.heading}>{changes.length} {changes.length === 1 ? 'change' : 'changes'}</Subtitle2>
           <ul className={styles.changes} data-testid="auto-build-changes">
@@ -487,6 +492,11 @@ function ResultView() {
             ))}
           </ul>
         </>
+      ) : null}
+      {r.changed && perks.length ? (
+        <Caption1 as="p" className={styles.line} data-testid="auto-build-perks">
+          <InfoRegular aria-hidden="true" /> Incarnon perks: {perks.join(', ')}. Apply sets them with their conditional parts on, as underframe.site does; change them in Options.
+        </Caption1>
       ) : null}
       {conditional.length ? (
         <Caption1 as="p" className={styles.line} data-testid="auto-build-conditional">
@@ -968,7 +978,7 @@ export function AutoBuildDialog() {
   if (!ready) return null;
   const locked = AS.activeConfig(lib).locked;
   const weapon = ctx.weaponByName.get(build.weaponName);
-  const idle = nothingToFill(build, weapon, keep, keepArcane);
+  const idle = nothingToFill(build, weapon, keep, keepArcane, ctx.data);
   const run = () => { if (!idle) actions.startAutoBuild({ keepSlots: [...keep], keepArcane }); };
   const over = done && ab.result.changed ? resultCapacity(ctx, build, ab.result).over : 0;
   return (

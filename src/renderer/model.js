@@ -13,6 +13,7 @@ import { SLOT_POLARITIES, capacityOf, capacityUse, effectiveSlotPolarities, form
 import { buffKey, buffLine, normalizeBuffList, normalizeStatuses, statusLine } from '../shared/external-buffs.js';
 import { modConditionalControls, withModStacks } from '../shared/conditional-mods.js';
 import { isRiven, rivenFitsWeapon, rivenSlotFor, sameRivenContent } from '../shared/rivens.js';
+import { incarnonFromSite, normalizeIncarnon } from '../shared/incarnon.js';
 import { fmtCompact } from './format.js';
 
 export const SLOT_COUNT = 9;
@@ -178,10 +179,12 @@ export function createBuild(ctx, overrides = {}) {
     // underframe.site's shapes: [{ id, name, value, element?, factionValue?, sourceBuild? }] and [{ type, stacks }].
     externalBuffs: [],
     externalStatuses: [],
-    // The weapon's options, at their defaults: the site's Progenitor bonus, 100% strength, the passives' defaults.
+    // The weapon's options, at their defaults: the site's Progenitor bonus, 100% strength, the passives' defaults, no
+    // Incarnon Genesis (docs/port-incarnon.md).
     progenitor: null,
     exaltedStrength: null,
     passives: {},
+    incarnon: null,
     enemy: defaultEnemy(ctx),
     simTime: DEFAULT_DURATION,
     notes: '',
@@ -328,13 +331,13 @@ export function withContent(build, content) {
   // Content without arcanes means "no arcanes", not "keep the current ones" (the same for polarities and buffs).
   return {
     ...identity, arcanes: (build.arcanes ?? []).map(() => null), slotPolarities: emptyPolarities(), catalyst: true,
-    externalBuffs: [], externalStatuses: [], progenitor: null, exaltedStrength: null, passives: {}, ...content,
+    externalBuffs: [], externalStatuses: [], progenitor: null, exaltedStrength: null, passives: {}, incarnon: null, ...content,
   };
 }
 
 /**
  * The weapon options a build sets (left out at their defaults, so older builds compare equal): its Progenitor bonus,
- * its exalted weapon's ability strength and its passives.
+ * its exalted weapon's ability strength, its passives and its Incarnon evolutions.
  */
 export function weaponOptionsOf(build) {
   const passives = build?.passives && Object.keys(build.passives).length ? build.passives : null;
@@ -342,10 +345,14 @@ export function weaponOptionsOf(build) {
     ...(build?.progenitor ? { progenitor: build.progenitor } : {}),
     ...(build?.exaltedStrength != null ? { exaltedStrength: build.exaltedStrength } : {}),
     ...(passives ? { passives } : {}),
+    ...(build?.incarnon ? { incarnon: build.incarnon } : {}),
   };
 }
 
-/** Clean weapon options for a weapon: a known Progenitor element (0-60%), a positive strength, its own passives. */
+/**
+ * Clean weapon options for a weapon: a known Progenitor element (0-60%), a positive strength, its own passives, and
+ * Incarnon perks the weapon has (incarnon.js normalizeIncarnon()).
+ */
 export function normalizeWeaponOptions(ctx, weapon, raw) {
   const p = raw?.progenitor;
   const progenitor = weapon?.is_progenitor && p && PROGENITOR_ELEMENTS.includes(p.element) && Number.isFinite(Number(p.value))
@@ -359,7 +366,7 @@ export function normalizeWeaponOptions(ctx, weapon, raw) {
     const n = Number(v);
     if (entry && Number.isFinite(n)) passives[name] = Math.min(passiveControl(entry).max, Math.max(0, Math.round(n)));
   }
-  return { progenitor, exaltedStrength, passives };
+  return { progenitor, exaltedStrength, passives, incarnon: normalizeIncarnon(ctx.data, weapon, raw?.incarnon) };
 }
 
 /** A build's weapon passives from a featured build's activeConditionals (off is 0; a choice keeps its value). */
@@ -417,11 +424,11 @@ export function changeWeapon(ctx, build, weaponName) {
     else removed.push(a.name);
   });
   // Forma belongs to the weapon it was applied to: the new weapon starts from its own innate polarities.
-  // Its Progenitor bonus, ability strength and passives too: they are the old weapon's.
+  // Its Progenitor bonus, ability strength, passives and Incarnon perks too: they are the old weapon's.
   return {
     build: {
       ...build, weaponName: weapon.name, modeName: defaultModeName(weapon, ctx.data, mods), mods, arcanes, slotPolarities: emptyPolarities(),
-      progenitor: null, exaltedStrength: null, passives: {},
+      progenitor: null, exaltedStrength: null, passives: {}, incarnon: null,
     },
     removed,
   };
@@ -659,17 +666,17 @@ export function featuredBuilds(ctx) {
 /** Parts of a featured build this app does not apply, for an honest note. */
 export function unappliedFeatures(tb, ctx = null) {
   const out = [];
-  // Arcanes, mods and the weapon's passives are applied, with their states from activeConditionals; other conditionals
-  // (Incarnon evolutions, Warframe passives) are not. "Distance" is the site's falloff slider, not a build feature.
+  // Arcanes, mods, the weapon's passives and its Incarnon perks are applied, with their states from activeConditionals;
+  // other conditionals (Warframe passives) are not. "Distance" is the site's falloff slider, not a build feature.
   const weapon = ctx?.weaponByName.get(tb.itemName);
   const applied = new Set([
     ...(tb.arcanes ?? []).filter(Boolean), ...(tb.mods ?? []).filter(Boolean).map(m => m.name), 'Distance',
     ...(weapon ? weaponPassives(ctx.data, weapon).map(e => e.name) : []),
   ]);
-  if (tb.activeConditionals && Object.entries(tb.activeConditionals).some(([k, v]) => v?.isActive && !applied.has(k))) out.push('conditionals');
+  const perkState = k => k.startsWith(`${tb.itemName}_evo`);
+  if (tb.activeConditionals && Object.entries(tb.activeConditionals).some(([k, v]) => v?.isActive && !applied.has(k) && !perkState(k))) out.push('conditionals');
   // Rivens are applied (docs/port-rivens.md); only a riven named without its stats (no riven object) is not.
   if (tb.mods?.some(m => m && !m.isRiven && /riven/i.test(m.name))) out.push('rivens');
-  if (tb.incarnon && Object.values(tb.incarnon).some(Boolean)) out.push('incarnon settings');
   // External buffs and statuses are applied (docs/port-external-buffs.md); a Warframe build's own buff sources are not.
   for (const k of ['externalWeaponBuffs', 'externalAbilities', 'archon_shards']) {
     if (tb[k]?.some(Boolean)) { out.push('Warframe buff sources'); break; }
@@ -686,11 +693,13 @@ export function buildFromFeatured(ctx, featured, enemy = null) {
     externalBuffs: tb.externalBuffs, externalStatuses: tb.externalStatuses,
     progenitor: tb.progenitor, exaltedStrength: tb.exaltedStrength,
     passives: ctx.weaponByName.has(tb.itemName) ? featuredPassives(ctx, ctx.weaponByName.get(tb.itemName), tb) : {},
+    // Its Incarnon perks, with the conditional states it set itself (the site's automatic ones are worked out again).
+    incarnon: ctx.weaponByName.has(tb.itemName) ? incarnonFromSite(ctx.data, ctx.weaponByName.get(tb.itemName), tb.incarnon, tb.activeConditionals) : null,
   });
   const skipped = unappliedFeatures(tb, ctx);
   const unsimulated = unsimulatedArcaneNames(ctx, build);
   const notes = [
-    `Incarnon settings and Warframe conditionals from featured builds are not applied${skipped.length ? ` (this one uses ${skipped.join(', ')})` : ''}; rivens and mod and arcane stacks are.` +
+    `Warframe conditionals from featured builds are not applied${skipped.length ? ` (this one uses ${skipped.join(', ')})` : ''}; rivens, Incarnon perks and mod and arcane stacks are.` +
       (unsimulated.length ? ` ${unsimulated.join(', ')} ${unsimulated.length > 1 ? 'are' : 'is'} equipped but not simulated.` : ''),
     ...(hasExternal(build) ? [`Its ${externalSummary(build)} are applied; Buffs in the Readout lists them.`] : []),
     ...warnings,
@@ -709,10 +718,6 @@ export function externalSummary(build) {
 export function equippedNames(build) {
   return build.mods.filter(Boolean).map(s => s.name);
 }
-
-/** Incarnon fire modes run, but their evolution bonuses aren't simulated (UX spec 5.7: say so). */
-export const isIncarnonMode = modeName => /incarnon/i.test(String(modeName ?? ''));
-export const INCARNON_NOTE = "Incarnon evolutions aren't simulated.";
 
 /** "Slot 5" / "Exilus". */
 export const slotLabel = slot => (slot === EXILUS_SLOT ? 'Exilus' : `Slot ${slot + 1}`);

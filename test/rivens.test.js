@@ -334,7 +334,7 @@ test('featured builds: a gun build\'s riven is applied and no longer reported as
   assert.deepEqual(M.unappliedFeatures(source), []);
   const { build, notes } = M.buildFromFeatured(ctx, { name: 'Riven Braton', description: '', source });
   assert.deepEqual(build.mods[1], { ...braton(), id: 'riven_9' }, 'no disposition or rank: 1.2 and 8');
-  assert.match(notes[0], /rivens and mod and arcane stacks are/);
+  assert.match(notes[0], /rivens, Incarnon perks and mod and arcane stacks are/);
   assert.deepEqual(M.unappliedFeatures({ itemName: 'Braton Prime', mods: [{ name: 'Riven Mod', rank: 8 }] }), ['rivens'], 'a riven without its stats is not applied');
   // The site's trusted builds with rivens are all melee: nothing is reported for their rivens either.
   for (const tb of data().trusted_builds.filter(t => t.mods?.some(m => m?.isRiven))) assert.ok(!M.unappliedFeatures(tb).includes('rivens'), tb.name);

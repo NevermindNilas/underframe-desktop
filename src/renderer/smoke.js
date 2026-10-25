@@ -1036,19 +1036,21 @@ async function checkFeatured(app, errors, checks) {
 }
 
 /**
- * Weapon options on a Progenitor weapon: Kuva Bramma shows "Options" (Braton Prime has none); a real click opens the
- * popover with the default Magnetic 25%; picking Heat from the element dropdown with real clicks changes the bonus and
+ * Weapon options on a Progenitor weapon: Kuva Bramma's "Options" (Braton Prime's offer only its Incarnon evolutions);
+ * a real click opens the popover with the default Magnetic 25%; picking Heat from the element dropdown with real clicks changes the bonus and
  * the DPS; Esc closes it. The weapon goes back to Braton Prime with its mods afterwards.
  */
 async function checkWeaponOptions(app, errors, checks) {
   const { store, actions, uf } = app;
-  if ($('[data-testid="weapon-options"]')) errors.push('options: Braton Prime shows weapon options it does not have');
+  // Braton Prime's only options are its Incarnon evolutions (docs/port-incarnon.md), not installed by default.
+  const own = $('[data-testid="weapon-options"]')?.getAttribute('aria-label') ?? '';
+  if (!/no Incarnon Genesis/.test(own) || /Magnetic/.test(own)) errors.push(`options: Braton Prime's Options say "${own}", expected only its Incarnon evolutions`);
   const before = store.get().build;
   // The featured check leaves the library drawer open; it covers the Loadout.
   actions.setLibraryOpen(false);
   await waitFor(() => !$('.fui-OverlayDrawer'), 2000);
   actions.setWeapon('Kuva Bramma');
-  const button = await waitFor(() => $('[data-testid="weapon-options"]'), 3000);
+  const button = await waitFor(() => (/Magnetic/.test($('[data-testid="weapon-options"]')?.getAttribute('aria-label') ?? '') ? $('[data-testid="weapon-options"]') : null), 3000);
   if (!button) { errors.push('options: no Options button on Kuva Bramma'); return; }
   checks.weaponOptionsLabel = button.getAttribute('aria-label');
   if (!/Magnetic 25%/.test(checks.weaponOptionsLabel ?? '')) errors.push(`options: the button says "${checks.weaponOptionsLabel}", expected the default Magnetic 25%`);
@@ -1069,7 +1071,7 @@ async function checkWeaponOptions(app, errors, checks) {
   const target = JSON.stringify(before.mods);
   for (let i = 0; i < 5 && (store.get().build.weaponName !== before.weaponName || JSON.stringify(store.get().build.mods) !== target); i++) actions.undo();
   if (store.get().build.weaponName !== before.weaponName) errors.push('options: undo did not bring the weapon back');
-  await waitFor(() => !$('[data-testid="weapon-options"]'), 2000);
+  await waitFor(() => /Incarnon/.test($('[data-testid="weapon-options"]')?.getAttribute('aria-label') ?? ''), 2000);
   log(`weapon options: ${JSON.stringify(checks.weaponOptions)}`);
 }
 

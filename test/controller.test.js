@@ -439,3 +439,28 @@ test('pinning the same unchanged result twice keeps one pin and raises no toast'
   assert.ok(toasts.length <= before + 1);
   actions.clearPins();
 });
+
+test('Incarnon perks are build edits: the Genesis, a perk, a conditional\'s stacks; each one undoes', opts, async () => {
+  await fresh();
+  actions.setWeapon('Furis');
+  assert.equal(store.get().build.incarnon, null);
+  actions.setIncarnonActive(true);
+  assert.equal(store.get().build.incarnon.evolution_1_active, true);
+  actions.setIncarnonPerk(2, 2);
+  assert.equal(store.get().build.incarnon.evolution_2_perk, 2);
+  actions.setIncarnonConditional('Furis_evo2_perk2_multishot', 2);
+  assert.equal(store.get().build.incarnon.conditionals.Furis_evo2_perk2_multishot, 2);
+  actions.setIncarnonConditional('Furis_evo2_perk2_multishot', null);
+  assert.equal(store.get().build.incarnon.conditionals, undefined, 'back to automatic');
+  actions.undo();
+  assert.equal(store.get().build.incarnon.conditionals.Furis_evo2_perk2_multishot, 2);
+  actions.undo();
+  actions.undo();
+  assert.equal(store.get().build.incarnon.evolution_2_perk, null);
+  // Removing the Genesis clears the perks, as on the site.
+  actions.setIncarnonPerk(4, 3);
+  actions.setIncarnonActive(false);
+  assert.equal(store.get().build.incarnon, null);
+  actions.undo();
+  assert.equal(store.get().build.incarnon.evolution_4_perk, 3);
+});

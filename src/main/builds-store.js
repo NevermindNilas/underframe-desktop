@@ -48,6 +48,25 @@ export function cleanExternalBuff(b) {
   return out;
 }
 
+/**
+ * Incarnon evolutions in underframe.site's shape: { evolution_1_active: true, evolution_2_perk .. evolution_5_perk:
+ * a perk number or null, conditionals?: { [id]: stacks } }. Null unless the Genesis is installed (docs/port-incarnon.md).
+ */
+export function cleanIncarnon(i) {
+  if (!isObj(i) || i.evolution_1_active !== true) return null;
+  const out = { evolution_1_active: true };
+  for (const e of [2, 3, 4, 5]) {
+    const p = Number(i[`evolution_${e}_perk`]);
+    out[`evolution_${e}_perk`] = Number.isInteger(p) && p > 0 && p < 10 ? p : null;
+  }
+  if (isObj(i.conditionals)) {
+    const c = Object.entries(i.conditionals).slice(0, 40)
+      .filter(([k, v]) => typeof k === 'string' && k && Number.isFinite(Number(v))).map(([k, v]) => [str(k, MAX_NAME), Math.max(0, Math.round(Number(v)))]);
+    if (c.length) out.conditionals = Object.fromEntries(c);
+  }
+  return out;
+}
+
 /** A status on the target before the fight: { type, stacks } with whole stacks of at least 1. */
 export function cleanExternalStatus(s) {
   if (!isObj(s) || typeof s.type !== 'string' || !s.type) return null;
@@ -109,6 +128,7 @@ export function normalizeBuild(build) {
     ...(Number.isFinite(Number(build.exaltedStrength)) && build.exaltedStrength !== null ? { exaltedStrength: Number(build.exaltedStrength) } : {}),
     ...(isObj(build.passives) ? { passives: Object.fromEntries(Object.entries(build.passives).slice(0, 40)
       .filter(([k, v]) => typeof k === 'string' && Number.isFinite(Number(v))).map(([k, v]) => [str(k, MAX_NAME), Math.round(Number(v))])) } : {}),
+    ...(cleanIncarnon(build.incarnon) ? { incarnon: cleanIncarnon(build.incarnon) } : {}),
     enemy: cleanEnemy(build.enemy),
 
     simTime: num(build.simTime, 20),

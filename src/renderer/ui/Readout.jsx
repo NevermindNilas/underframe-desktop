@@ -15,7 +15,7 @@ import {
 import { actions, simKey } from '../controller.js';
 import { useApp, useDelayedFlag, useDerived } from '../hooks.js';
 import {
-  DURATIONS, INCARNON_NOTE, SIM_SEEDS, compareRows, isIncarnonMode, resultDelta, simErrorText, targetLabel, ttkText,
+  DURATIONS, SIM_SEEDS, compareRows, resultDelta, simErrorText, targetLabel, ttkText,
 } from '../model.js';
 import { fmtInt } from '../format.js';
 import { buffLine, statusLine } from '../../shared/external-buffs.js';
@@ -74,12 +74,11 @@ const useStyles = makeStyles({
 
 const NONE = Object.freeze([]);
 
-/** What isn't modelled in this build: mods, arcanes, the incarnon form. Null when everything is. */
+/** What isn't modelled in this build: mods, arcanes, external buffs. Null when everything is. */
 function useHonesty() {
   const { partialMap, stats } = useDerived();
   const ctx = useApp(s => s.ctx);
   const mods = useApp(s => s.build.mods);
-  const incarnon = useApp(s => isIncarnonMode(s.build.modeName));
   const entries = [...partialMap.entries()].filter(([name]) => mods.some(m => m?.name === name));
   const engineOnly = mods.filter(m => m && !m.isRiven && hasNoStats(ctx, m.name)).map(m => m.name);
   const arcaneNotes = (stats?.arcaneNotes ?? []).filter(n => n.level !== 'inactive');
@@ -90,8 +89,8 @@ function useHonesty() {
   const buffs = useApp(s => s.build.externalBuffs ?? NONE);
   const statuses = useApp(s => s.build.externalStatuses ?? NONE);
   const applied = [...buffs.map(b => buffLine(b, ctxData)), ...statuses.map(statusLine)].join('; ');
-  const count = entries.length + engineOnly.length + arcaneNotes.length + externalNotes.length + (incarnon ? 1 : 0);
-  return count ? { entries, engineOnly, arcaneNotes, externalNotes, incarnon, count, applied } : null;
+  const count = entries.length + engineOnly.length + arcaneNotes.length + externalNotes.length;
+  return count ? { entries, engineOnly, arcaneNotes, externalNotes, count, applied } : null;
 }
 
 /** "◐ Partially simulated: 2 mods · Details" (spec 4): a neutral line, the list in a popover. */
@@ -100,7 +99,7 @@ function HonestyLine() {
   const h = useHonesty();
   if (!h) return null;
   const things = h.entries.length + h.engineOnly.length + h.arcaneNotes.length + h.externalNotes.length;
-  const what = [things ? `${things} ${things === 1 ? 'item' : 'items'} approximated` : null, h.incarnon ? 'incarnon form not modelled' : null].filter(Boolean).join(', ');
+  const what = `${things} ${things === 1 ? 'item' : 'items'} approximated`;
   return (
     <div className={styles.honesty} data-testid="honesty-line">
       <CircleHalfFillRegular aria-hidden="true" />
@@ -112,7 +111,6 @@ function HonestyLine() {
         <PopoverSurface style={{ maxWidth: 360 }}>
           <Body1 as="p" style={{ marginTop: 0 }}>Parts of this build aren't modelled, so its results may be off:</Body1>
           <ul className={styles.list}>
-            {h.incarnon ? <li><Body1>Incarnon form: {INCARNON_NOTE}</Body1></li> : null}
             {h.entries.map(([name, list]) => <li key={name}><Body1>{name}: {list.join(', ')}</Body1></li>)}
             {h.engineOnly.map(name => <li key={`e-${name}`}><Body1>{name}: no numeric stats in the data; it counts only if the engine models it itself.</Body1></li>)}
             {h.arcaneNotes.map(n => <li key={`${n.name}-${n.level}`}><Body1>{n.name}: {n.level === 'none' ? 'not simulated. ' : 'partially simulated. '}{n.text}</Body1></li>)}

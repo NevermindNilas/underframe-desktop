@@ -3,8 +3,9 @@ import { DAMAGE_TYPE_BY_DT, PHYSICAL, combineElements } from './damage.js';
 import { resolveFaction, baneFamilyOfStat } from './factions.js';
 import { statValue } from './mods.js';
 import { arcaneModifiersFor } from './arcanes.js';
-import { externalModifiers, mergeExternalTotals } from './external-buffs.js';
+import { emptyExternalTotals, externalModifiers, mergeExternalTotals } from './external-buffs.js';
 import { addRivenModifiers } from './rivens.js';
+import { applyIncarnonToModes, incarnonActive, incarnonEffects, incarnonElements, incarnonFor, incarnonStates } from './incarnon.js';
 
 const STATUS_DURATION_BASE_SECONDS = 6;
 /** underframe.site caps combined ammo efficiency at 75%; only Infinite Ammo makes shots free. */
@@ -199,9 +200,11 @@ function lateElements(innate, innateTotal, combining) {
  * parts that are not plain buckets: combining and non-combining external elements, flat and multiplicative crit,
  * flat status, Pageflight, Eclipse, multiplicative ammo efficiency and Infinite Ammo; and from conditional mods, their
  * extra elements, Sentient Barrage's charged-shot crit and Wild Frenzy's fire rate.
+ * `more.perks` is incarnon.js incarnonEffects(): the Incarnon perks' parts that are not plain buckets (base magazine,
+ * base crit multiplier, elements, crit from status and status from crit, accuracy, the engine's per-mode fields).
  */
 export function computeFireMode(mode, m, reload, weapon = null, ext = null, more = {}) {
-  const { normal = null, progenitor = null, incarnon = null, coFactor = 100, disableAmmo = false } = more;
+  const { normal = null, progenitor = null, incarnon = null, perks = null, coFactor = 100, disableAmmo = false } = more;
   const own = mode.innate_elements ?? {};
   const ownTotal = Object.values(own).reduce((a, b) => a + b, 0) || Number(mode.base_damage) || 0;
   // A Progenitor bonus (Kuva, Tenet, Coda weapons) adds its element to the base, so every mod scales it.
@@ -225,6 +228,8 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
   }
   const ordered = [
     ...m.elements.map(([type, pct]) => [type, innateTotal * pct]),
+    // Incarnon perks' elements (Dual Toxocyst's Toxin) join after the mods'.
+    ...incarnonElements(perks).map(([type, pct]) => [type, innateTotal * pct]),
     ...CONDITIONAL_ELEMENTS.filter(([, k]) => ext?.[k] > 0).map(([type, k]) => [type, innateTotal * ext[k]]),
     ...lateElements(innate, innateTotal, ext?.externalCombiningElements),
   ];
@@ -238,8 +243,9 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
   if (ext?.komorexZoomBonus) for (const t of Object.keys(raw)) if (COMBINED_ELEMENTS.has(t)) raw[t] *= 2;
   const quantized = quantizeDamageTypes(raw, innateTotal);
   const finalDamageTypes = {};
-  // Plinx's alternate fire spends the whole magazine in one shot, with the damage of all of it.
-  const baseMagazine = Math.max(1, Math.round((reload?.magazine_size ?? 1) * (1 + m.magazine) + m.flatMagazine) || 1);
+  // Plinx's alternate fire spends the whole magazine in one shot, with the damage of all of it. Incarnon perks may add
+  // rounds to the base magazine before mods scale it.
+  const baseMagazine = Math.max(1, Math.round(((reload?.magazine_size ?? 1) + (perks?.baseMagazine ?? 0)) * (1 + m.magazine) + m.flatMagazine) || 1);
   const plinxAltFire = ['Tenet Plinx', 'Plinx'].includes(weapon?.name) && ['Alt-Fire', 'Alt-Fire AoE'].includes(mode.mode_name);
   const shotScale = plinxAltFire ? Math.max(1, baseMagazine) : 1;
   for (const [type, v] of Object.entries(Object.keys(quantized).length ? quantized : raw)) {
@@ -252,20 +258,33 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
   const inherits = normal && mode.inherits_weapon_crit !== false;
   const ownCrit = typeof mode.crit_chance === 'number' ? mode.crit_chance : 0;
   const ownCritMultiplier = typeof mode.crit_multiplier === 'number' ? mode.crit_multiplier : 1;
-  const baseCritChance = inherits && ownCrit === 0 ? normal.crit_chance || 0 : ownCrit;
-  const baseCritMultiplier = quantizeCritMultiplier(inherits && ownCritMultiplier === 1 ? normal.crit_multiplier || 1 : ownCritMultiplier);
-  const baseStatus = (typeof mode.status_chance === 'number' ? mode.status_chance : normal?.status_chance ?? 0) / 100;
+  let baseCritChance = inherits && ownCrit === 0 ? normal.crit_chance || 0 : ownCrit;
+  // An Incarnon perk's crit multiplier bonus adds to the base before it is rounded to the game's steps.
+  const baseCritMultiplier = quantizeCritMultiplier((inherits && ownCritMultiplier === 1 ? normal.crit_multiplier || 1 : ownCritMultiplier) + (perks?.baseCritDamage ?? 0));
+  let baseStatus = (typeof mode.status_chance === 'number' ? mode.status_chance : normal?.status_chance ?? 0) / 100;
   const flatCrit = (ext?.flatCritChance ?? 0) + (isAoE ? 0 : ext?.nonRadialFlatCritChance ?? 0);
-  const finalCritChance = (baseCritChance * (1 + critChanceMod) + flatCrit * 100) * (ext?.multiplicativeCritChance ?? 1);
+  const critChanceOf = b => (b * (1 + critChanceMod) + flatCrit * 100) * (ext?.multiplicativeCritChance ?? 1);
   const finalCritMultiplier = (baseCritMultiplier * (1 + critDamageMod) + (ext?.flatCritDamage ?? 0)) * (ext?.multiplicativeCritDamage ?? 1);
   // A multishot lock (Acuity, or a mode that cannot take multishot) keeps the mode's own, whatever mods, buffs and
   // arcanes add.
   const baseMultishot = Number(mode.multishot) || 1;
   const multishotLocked = m.multishotLocked || isHitscanArea(mode) || lockedFor(MULTISHOT_LOCKED_MODES, weapon, mode);
-  const finalMultishot = multishotLocked ? baseMultishot
+  let finalMultishot = multishotLocked ? baseMultishot
     : EXTRA_BEAMS_MULTISHOT.has(weapon?.name) && mode.is_beam && baseMultishot > 1 ? (baseMultishot - 1) * (1 + m.multishot) + 1
       : baseMultishot * (1 + m.multishot);
+  // An Incarnon perk that feeds multishot from the ammo pool (Torid) makes a beam's extra beams count more.
+  const nativeExpectedFireIterations = finalMultishot;
+  const ammoPoolBeam = Boolean(mode.is_beam && perks?.ammoPoolPercent > 0);
+  if (ammoPoolBeam) finalMultishot += Math.max(0, finalMultishot - baseMultishot) * perks.ammoPoolPercent;
+  // Incarnon perks that turn crit into status (and status into crit), up to their caps, in percent points.
+  let statusFromCrit = 0;
+  for (const c of perks?.statusChanceFromCrit ?? []) statusFromCrit += Math.min(critChanceOf(baseCritChance) * c.ratio, c.cap ?? Infinity) / 100;
+  if (statusFromCrit !== 0) baseStatus = Math.max(baseStatus + statusFromCrit, 0);
   const perProjectileStatus = Math.max(0, baseStatus * (1 + m.statusChance) * (ext?.pageflightMultiplier ?? 1) + m.flatStatusChance + (ext?.flatStatusChance ?? 0));
+  let critFromStatus = 0;
+  for (const c of perks?.critChanceFromStatus ?? []) critFromStatus += Math.min(perProjectileStatus * 100 * c.ratio, c.cap ?? Infinity);
+  baseCritChance += critFromStatus;
+  const finalCritChance = critChanceOf(baseCritChance);
   // Each pellet rolls for status; a beam's status chance is per tick and is not combined over its beams.
   const aggregatedStatus = mode.is_beam ? perProjectileStatus
     : perProjectileStatus < 1 && finalMultishot > 0 ? 1 - (1 - perProjectileStatus) ** Math.max(1, finalMultishot)
@@ -316,9 +335,19 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
   else if (ammoCost > 0) magazineSize = baseMagazine / ammoCost;
   else { magazineSize = 1; ammoConsumption = 0; }
   if (incarnonPool) { magazineSize = incarnon.incarnon_max_ammo; ammoConsumption = 1; }
+  // Incarnon perks that add multishot to a magazine's last shots or last burst (Torid, Burston): the normal form only.
+  const lastShots = !incarnonPool && ammoCost > 0 ? perks?.lastMagazineShots ?? [] : [];
+  const burstLocked = isHitscanArea(mode) || lockedFor(MULTISHOT_LOCKED_MODES, weapon, mode);
+  const lastBurst = !incarnonPool && ammoCost > 0 && burstCount > 1 ? (perks?.lastMagazineBurst ?? 0) * Math.max(0, burstLocked ? 1 : 1 + m.multishot) : 0;
+  const ammoPool = innateTotal > 0 && (perks?.ammoPoolPercent > 0 || perks?.ammoPoolFlat > 0);
 
   const punchLocked = isAoE || Number(mode.punch_through) === -1;
-  const reachRange = Number(mode.range) || 0;
+  // A mode whose projectiles stack into one (Stug's blobs) grows its radius toward its max as multishot fills the stack.
+  const stackCap = Math.max(0, Number(mode.multishot_stack_cap) || 0);
+  const stackMaxRange = Math.max(0, Number(mode.multishot_stack_max_range) || 0);
+  const stackProgress = stackCap > 1 ? (Math.min(stackCap, Math.max(1, finalMultishot)) - 1) / (stackCap - 1) : 0;
+  const ownRange = Number(mode.range) || 0;
+  const reachRange = stackMaxRange > ownRange ? ownRange + (stackMaxRange - ownRange) * stackProgress : ownRange;
   const baseFinalRange = reachRange + m.range + (isSinisterReachBeam(weapon, mode) ? m.beamLength : 0);
   const blastRadiusMultiplier = Math.max(0, 1 + m.blastRadius);
   const finalBlastRadius = Math.max(0, baseFinalRange * blastRadiusMultiplier + m.flatBlastRadius);
@@ -350,14 +379,19 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
     multishotDamageMultiplier: 1,
     punchThroughLocked: punchLocked,
     finalWidth: Number(mode.width) > 0 ? Number(mode.width) : 0.1,
-    finalAccuracy: mode.accuracy || 100,
+    finalAccuracy: (mode.accuracy || 100) * (1 + (perks?.accuracy ?? 0)),
     finalDamageTypes,
     totalFinalDamage,
     // Bonus damage per status type on the target (Galvanized Aptitude, Savvy and Shot at their stacks).
     conditionOverload: m.conditionOverload ?? 0,
     baseCritChance,
     baseCritMultiplier,
-    ...multishotOverride(mode, { critChanceMod, critDamageMod, ext, m, perProjectileStatus, innateTotal }),
+    ...(ammoPool ? {
+      ammoPoolMultishotInnateProjectiles: Math.max(1, baseMultishot),
+      ammoPoolMultishotDamageMultiplier: (1 + perks.ammoPoolPercent) * (innateTotal + perks.ammoPoolFlat) / innateTotal,
+    } : {}),
+    ...(ammoPoolBeam ? { nativeExpectedFireIterations } : {}),
+    ...multishotOverride(mode, { critChanceMod, critDamageMod, ext, m, perProjectileStatus, innateTotal, critFromStatus, critChanceOf }),
     multishotStackCap: Math.max(0, Number(mode.multishot_stack_cap) || 0),
     multishotStackMaxBaseDamage: Math.max(0, Number(mode.multishot_stack_max_base_damage) || 0),
     multishotStackMinProjectiles: Math.max(0, Number(mode.multishot_stack_min_projectiles) || 0),
@@ -369,7 +403,9 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
     ...(typeof mode['1x_headshot_multiplier'] === 'boolean' ? { '1x_headshot_multiplier': mode['1x_headshot_multiplier'] } : {}),
     forced_procs: (mode.forced_procs ?? []).filter(p => typeof p === 'string' && p.length > 0),
     magazineSize,
-    ...(incarnonPool || /incarnon/i.test(mode.mode_name) ? { usesIncarnonChargePool: true, lastMagazineMultishotBonuses: [] } : {}),
+    ...(incarnonPool || /incarnon/i.test(mode.mode_name) ? { usesIncarnonChargePool: true, lastMagazineMultishotBonuses: [] }
+      : lastShots.length ? { lastMagazineMultishotBonuses: lastShots.map(b => ({ ...b })) } : {}),
+    ...(lastBurst > 0 ? { lastMagazineBurstMultishotBonus: lastBurst } : {}),
     realMagazineSize: magazineSize,
     // Ammo efficiency (arcanes, Energized Munitions) lowers what each shot uses, up to 75%; Infinite Ammo makes it free.
     ammoConsumption,
@@ -377,18 +413,19 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
     ...(explosion?.notify_combo === true ? { nativeComboEnabled: true } : {}),
     displayStatusChance: perProjectileStatus * 100,
     perProjectileStatusChance: perProjectileStatus * 100,
-    reloadTime: reloadTimeOf(reload, baseMagazine, 1 + m.reload),
+    // Some Incarnon perks speed up the normal form's reload only.
+    reloadTime: reloadTimeOf(reload, baseMagazine, 1 + m.reload + (incarnonPool ? 0 : perks?.normalReload ?? 0)),
     doughtyCritBonus: 0,
     factionDamage: m.factionDamage,
     eclipseMultiplier: 1 + (ext?.eclipseMultiplier ?? 0),
     customHeadshotAccuracy: 0,
     customHeadshotMultiplier: -1,
-    bleedOnImpactChance: 0,
-    forceProcCount: null,
+    bleedOnImpactChance: perks?.bleedOnImpactChance ?? 0,
+    forceProcCount: perks?.forceProcCount ?? null,
     // 0 means "no override", as underframe.site sends it (1 made non-crit hits about 1-2% stronger).
-    nonCritDamageMultiplier: 0,
+    nonCritDamageMultiplier: perks?.nonCritDamageMultiplier ?? 0,
     // `m` holds the mods' status damage plus the conditional and external part; the site also reports the mods' alone.
-    statusDamageBonus: m.statusDamage,
+    statusDamageBonus: m.statusDamage + (perks?.statusDamage ?? 0),
     statusDamageWeaponModBonus: m.statusDamage - (ext?.statusDamage ?? 0),
     bodyshotDamageMultiplier: Math.max(0, 1 + m.bodyshot),
     // Thunderbolt: projectiles may explode on contact.
@@ -403,10 +440,12 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
       contactExplosionConditionalBase: Math.max(0, Number(explosion.conditional_base_damage) || 0),
     } : {}),
     meleeDamageModMultiplier: Math.max(0, damageMultiplier),
-    guaranteedNonCritDamageMultiplier: Math.max(1, 1 + m.nonCritDamage),
-    incarnonBaseDamageBonus: 0,
+    guaranteedNonCritDamageMultiplier: Math.max(1, 1 + m.nonCritDamage + (perks?.guaranteedNonCritDamage ?? 0)),
+    // Flat base damage from Incarnon perks (always-on, plus this mode's conditional part) and their conditional
+    // damage bonus, which the engine reads apart from the damage types.
+    incarnonBaseDamageBonus: (perks?.baseDamageBonus ?? 0) + (perks ? mode.incarnonConditionalBase ?? 0 : 0),
     sentientIncisionPercent: 0,
-    simulationAdditiveDamageBonus: 0,
+    simulationAdditiveDamageBonus: perks?.simulationAdditiveDamage ?? 0,
     genericWeaponDamageBonus: 0,
     stanceDamageMultiplier: 0,
     primaryCompressionMultiplicativeDamageMultiplier: 1,
@@ -428,7 +467,7 @@ export function computeFireMode(mode, m, reload, weapon = null, ext = null, more
     falloff: scaledFalloff(mode, m, progenitorFor(weapon, progenitor) ? Number(progenitor.value) / 100 : 0),
     is_ricochet: Boolean(mode.is_ricochet),
     ricochetCount: Number.isFinite(Number(mode.ricochet_count)) && mode.ricochet_count != null ? Number(mode.ricochet_count) : null,
-    punctureArmorStrip: 0,
+    punctureArmorStrip: perks?.punctureArmorStrip ?? 0,
     percentHpDamageFraction: 0,
     percentHpReferenceEhp: 0,
     percentHpPreviewBaseDamage: 0,
@@ -506,7 +545,7 @@ function scaledFalloff(mode, m, progenitorFraction = 0) {
  * Projectiles added by multishot that differ from the first (Tenet Detron: its extra pellets have their own damage,
  * crit and status); the site's fields with their defaults when the mode has none.
  */
-function multishotOverride(mode, { critChanceMod, critDamageMod, ext, m, perProjectileStatus, innateTotal }) {
+function multishotOverride(mode, { critChanceMod, critDamageMod, ext, m, perProjectileStatus, innateTotal, critFromStatus = 0, critChanceOf = null }) {
   const o = mode.modded_multishot_projectile_override;
   const n = k => Number(o?.[k]);
   const valid = o && n('innate_projectiles') >= 1 && n('base_damage') > 0 && n('crit_chance') >= 0 && n('crit_multiplier') >= 1 && Number(mode.base_damage) > 0;
@@ -529,7 +568,9 @@ function multishotOverride(mode, { critChanceMod, critDamageMod, ext, m, perProj
   return {
     moddedMultishotOverrideInnateProjectiles: n('innate_projectiles'),
     moddedMultishotOverrideBaseCritChance: n('crit_chance'),
-    moddedMultishotOverrideFinalCritChance: (n('crit_chance') * (1 + critChanceMod) + flatCrit * 100) * (ext?.multiplicativeCritChance ?? 1),
+    // An Incarnon perk's crit from status adds to the extra projectiles' base crit too.
+    moddedMultishotOverrideFinalCritChance: critFromStatus && critChanceOf ? critChanceOf(n('crit_chance') + critFromStatus)
+      : (n('crit_chance') * (1 + critChanceMod) + flatCrit * 100) * (ext?.multiplicativeCritChance ?? 1),
     moddedMultishotOverrideFinalCritMultiplier: (quantizeCritMultiplier(n('crit_multiplier')) * (1 + critDamageMod) + (ext?.flatCritDamage ?? 0)) * (ext?.multiplicativeCritDamage ?? 1),
     moddedMultishotOverrideDamageMultiplier: n('base_damage') / Number(mode.base_damage),
     moddedMultishotOverrideFinalStatusChance: status,
@@ -578,24 +619,49 @@ export function addModifiers(m, extra) {
  * `externalStatuses` ([{ type, stacks }] already on the target) can meet an element arcane's need (Cold: Frostbite).
  * `conditionals` is conditional-mods.js resolveModConditionals() output for the same mods: their conditional parts
  * (Galvanized stacks, ...) join the external totals.
- * @returns {{ modes: object[], modifiers: object }} `modifiers` are the mods' alone.
+ * `incarnon` is the build's Incarnon (incarnon.js): with the Genesis installed, its perks count, their conditional
+ * parts at the build's settings or the site's defaults. Those defaults read the stats (crit below a threshold, a status
+ * source) and the pick (`incarnonContext`: { modeId, customFireModes, buffs }), so the stats are worked out as the site
+ * settles them: once with only the build's own settings, then again with the defaults that gives, when any is on.
+ * @returns {{ modes: object[], modifiers: object, incarnon: object|null }} `modifiers` are the mods' alone; `incarnon`
+ *   is incarnonEffects() as applied (with every conditional's `states`), null without perks.
  */
-export function computeWeaponStats(weapon, modSlots, { modsByName, reload, targetFaction, arcanes = null, external: ownExternal = null, externalStatuses = null, conditionals = null, progenitor = null, data = null }) {
+export function computeWeaponStats(weapon, modSlots, options) {
+  const { incarnon = null, data = null, externalStatuses = null, incarnonContext = {} } = options;
+  if (!data || !incarnonActive(incarnon) || !incarnonFor(data, weapon)) return { ...statsWithPerks(weapon, modSlots, options, null), incarnon: null };
+  const context = { ...incarnonContext, statuses: externalStatuses ?? [] };
+  const own = incarnonStates(data, weapon, incarnon, { ...context, weaponStats: null });
+  const first = incarnonEffects(data, weapon, incarnon, own);
+  const once = statsWithPerks(weapon, modSlots, options, first);
+  const states = incarnonStates(data, weapon, incarnon, { ...context, weaponStats: once.modes });
+  if (Object.entries(states).every(([id, s]) => s.isActive === own[id].isActive && (!s.isActive || s.stacks === own[id].stacks))) {
+    return { ...once, incarnon: { ...first, states } };
+  }
+  const fx = incarnonEffects(data, weapon, incarnon, states);
+  return { ...statsWithPerks(weapon, modSlots, options, fx), incarnon: fx };
+}
+
+/** computeWeaponStats() at given Incarnon effects (null: none). */
+function statsWithPerks(weapon, modSlots, { modsByName, reload, targetFaction, arcanes = null, external: ownExternal = null, externalStatuses = null, conditionals = null, progenitor = null, data = null }, perks) {
   const external = mergeExternalTotals(ownExternal, conditionals?.totals ?? null);
   const modifiers = collectModifiers(modSlots, modsByName, targetFaction);
-  const withExternal = external ? addModifiers(modifiers, externalModifiers(external)) : modifiers;
-  const prepared = preparedModes(weapon, modSlots);
+  const withBuffs = external ? addModifiers(modifiers, externalModifiers(external)) : modifiers;
+  // Incarnon perks add to the same buckets; their flat crit, crit multiplier, ammo and Infinite Ammo parts reach the
+  // stats like a buff's, but not the engine's conditionalStats (the site keeps them apart).
+  const withExternal = perks ? addModifiers(withBuffs, perks.modifiers) : withBuffs;
+  const ext = perks ? mergeExternalTotals(external ?? emptyExternalTotals(), perks.ext) : external;
+  const prepared = applyIncarnonToModes(preparedModes(weapon, modSlots), perks, weapon);
   const normal = weapon.fire_modes.find(m => m.mode_name === 'Normal Attack') ?? weapon.fire_modes[0] ?? null;
   const incarnon = data ? (data.incarnons ?? []).find(i => i.name === weapon.name) ?? null : null;
   // Any mode that costs no ammo (Penta's fire patch) turns accurate ammo off for the weapon, as on the site.
   const disableAmmo = prepared.some(m => m.ammo_cost === 0 || (typeof m.ammo_cost === 'number' && m.ammo_cost <= 0 && m.disable_accurate_ammo));
-  const more = mode => ({ normal, progenitor, incarnon, coFactor: coFactorOf(data, weapon, mode), disableAmmo });
+  const more = mode => ({ normal, progenitor, incarnon, perks, coFactor: coFactorOf(data, weapon, mode), disableAmmo });
   const modes = prepared.map(mode => {
-    const plain = computeFireMode(mode, withExternal, reload, weapon, external, more(mode));
+    const plain = computeFireMode(mode, withExternal, reload, weapon, ext, more(mode));
     if (!arcanes?.entries?.length) return plain;
     // Arcanes never change which elements a mode deals, so the plain mode's damage types decide.
     const extra = arcaneModifiersFor(arcanes, plain.finalDamageTypes, externalStatuses);
-    return Object.keys(extra).length ? computeFireMode(mode, addModifiers(withExternal, extra), reload, weapon, external, more(mode)) : plain;
+    return Object.keys(extra).length ? computeFireMode(mode, addModifiers(withExternal, extra), reload, weapon, ext, more(mode)) : plain;
   });
   applyScriptedHeatFields(weapon, modSlots, modes, progenitor);
   // The Shedu's pulse when its magazine empties, with the weapon's mods, on every mode.

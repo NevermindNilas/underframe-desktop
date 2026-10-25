@@ -31,7 +31,8 @@ Versions are named by their release date (`2026.10.25`).
   from a screenshot; the site's riven tools: Slot my riven, Auto riven (the best roll for the build), Rolls data (CSV)
   and a compare of two rivens
 - External buffs and target statuses, with presets
-- Weapon options: Progenitor bonuses, exalted weapons' ability strength, weapon passives; combined fire modes
+- Weapon options: Progenitor bonuses, exalted weapons' ability strength, weapon passives, Incarnon evolutions (the
+  Genesis, a perk per evolution, conditional perks at the stacks you set, with the site's defaults); combined fire modes
 - Auto build: the underframe.site optimizer, with blacklists, whitelists and Cost Control
 - Auto Forma: the fewest Forma that fit the mods and where they go (moving mods to matching slots first),
   with the extra Forma that free more capacity
@@ -116,9 +117,9 @@ core/          Private submodule: Underframe engine (.wasm + loader) and data.js
   as a text card.
 - Screenshot import runs Windows.Media.Ocr through a small PowerShell helper
   (`src/main/ocr/`, unpacked from the asar); nothing is uploaded.
-- Known limits: guns only (no melee, companions, archguns or kitguns), no Incarnon
-  evolutions. The stats match underframe.site's engine input for every supported gun
-  (docs/port-weapon-stats.md).
+- Known limits: guns only (no melee, companions, archguns or kitguns). The stats match
+  underframe.site's engine input for every supported gun (docs/port-weapon-stats.md), Incarnon
+  perks included (docs/port-incarnon.md).
 
 ## Testing modes
 

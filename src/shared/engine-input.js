@@ -3,6 +3,7 @@ import { arcaneConditionalStats } from './arcanes.js';
 import { externalConditionalStats, mergeConditionalStats, mergeExternalTotals, strippedArmor } from './external-buffs.js';
 import { rivenForEngine } from './rivens.js';
 import { isCombinedMode, modeLabel } from './fire-modes.js';
+import { incarnonConditionalStats } from './incarnon.js';
 
 /**
  * The large, rarely-changing part of the input. Sent once via cache_app_state and referenced by id.
@@ -62,9 +63,14 @@ function modesFiredBy(weapon, modeName, customFireModes) {
  *   need (a Cold status for Primary Frostbite), the same list passed to computeWeaponStats().
  * @param {object|null} [p.conditionals] resolveModConditionals() output; the same one passed to computeWeaponStats().
  *   Its totals join the external buffs' conditionalStats, as underframe.site sends them.
+ * @param {object|null} [p.incarnon] computeWeaponStats().incarnon: the Incarnon perks' engine fields (armor strip per
+ *   Puncture hit, a bodyshot crit multiplier, projectile speed, the Latron's headshot multiplier).
  */
-export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null, external: ownExternal = null, externalStatuses = null, conditionals = null, customFireModes = [] }) {
+export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeName, maxTime, appStateRef = null, appState, reload = null, debugLog = true, arcanes = null, external: ownExternal = null, externalStatuses = null, conditionals = null, customFireModes = [], incarnon = null }) {
   const external = mergeExternalTotals(ownExternal, conditionals?.totals ?? null);
+  // A target whose headshot multiplier is 1 takes no headshot bonus (the site's "forced 1x").
+  const headshotMultiplier = enemy.headshotMultiplier ?? 2;
+  const perkHeadshot = Math.abs(headshotMultiplier - 1) > 1e-9 ? incarnon?.engine?.headshotMultiplier ?? 0 : 0;
   const input = {
     weaponStats,
     enemyConfig: {
@@ -73,7 +79,7 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       armor: strippedArmor(enemy.armor, external, Boolean(enemy.armorStripImmune)),
       shields: enemy.shields,
       overguard: enemy.overguard,
-      headshotMultiplier: enemy.headshotMultiplier ?? 2,
+      headshotMultiplier: headshotMultiplier + perkHeadshot,
       isHeadshot: Boolean(enemy.headshot),
       // A fraction (0..1), as underframe.site sends it.
       headshotAccuracy: enemy.headshot ? 1 : 0,
@@ -102,7 +108,7 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
       selectedStanceCombo: '',
       // Simulate magazines and reloads (underframe.site's default); off fires forever without reloading.
       // Weapons with no reload row would otherwise get a placeholder 1-round magazine and reload after every shot.
-      useAccurateAmmo: useAccurateAmmo(weapon, weaponStats, modeName, reload, external, customFireModes),
+      useAccurateAmmo: useAccurateAmmo(weapon, weaponStats, modeName, reload, incarnon?.ext?.infiniteAmmo ? { ...external, infiniteAmmo: true } : external, customFireModes),
       initialCombo: 0,
       armorStripPerHit: 0,
       generateDebugLog: debugLog,
@@ -115,10 +121,15 @@ export function buildEngineInput({ weapon, modSlots, weaponStats, enemy, modeNam
   const fired = modesFiredBy(weapon, modeName, customFireModes);
   const mode = weaponStats.find(m => m.mode_name === modeName) ?? weaponStats.find(m => m.mode_name === fired[0]) ?? weaponStats[0];
   // External buffs' engine fields (procs, vulnerabilities, Sonar, ...) and their stat buckets (DoT damage) join them.
-  const conditionalStats = mergeConditionalStats(
+  const conditionalStats = mergeConditionalStats(mergeConditionalStats(
     arcanes ? arcaneConditionalStats(arcanes, mode?.finalDamageTypes, externalStatuses) : null,
     external ? externalConditionalStats(external) : null,
-  );
+  ), incarnonConditionalStats(incarnon));
+  // Armor stripped per Puncture status (Latron's Flensing Spikes) also goes to the enemy and the run, as on the site.
+  if (conditionalStats?.armorStripPerHit > 0) {
+    input.enemyConfig.armorStripPerHit = conditionalStats.armorStripPerHit;
+    input.simulationParams.armorStripPerHit = conditionalStats.armorStripPerHit;
+  }
   if (appStateRef != null) {
     input.appStateRef = appStateRef;
     // A top-level conditionalStats replaces the cached app state's (empty) one.

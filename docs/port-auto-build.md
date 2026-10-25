@@ -338,7 +338,7 @@ Then re-apply the arcane fallback and score the filled build with runs(5).
 
 **Step 5, arcane re-optimisation per top-3 candidate** (progress 87-95%). The run re-runs the arcane search on the full build, with runs(30) per arcane plus the baseline, and scores the result with runs(50). The new arcane is kept only if that score beats the candidate's score. The detail line reads "Selected A (X DPS, +Y)", "No better arcane found." or "A tested; keeping B.".
 
-Incarnon evolution steps (2.7 and 4.3), the stance re-check (4.5) and Progenitor element logic run here for weapons that have them. All are out of scope for us.
+Incarnon evolution steps (2.7 and 4.3) are ported (docs/port-incarnon.md section 7). The stance re-check (4.5) and Progenitor element logic also run here for weapons that have them; both are out of scope for us.
 
 ### 4.5 Step 6: final selection (progress 95%)
 
@@ -469,7 +469,7 @@ Stats for each candidate are computed exactly as for the live readout. Every con
 - Melee and stances (Steps 1 and 4.5); melee-only targets and raw candidates.
 - Companion claws (their own pipeline).
 - Archguns and kitguns (multi-slot arcane products). The app has no archguns; kitguns are unsupported (`isKitgun`).
-- Incarnon evolution selection (Steps 2.7 and 4.3); the app does not model evolutions.
+- ~~Incarnon evolution selection (Steps 2.7 and 4.3); the app does not model evolutions.~~ Ported with the evolutions (docs/port-incarnon.md section 7).
 - Progenitor element logic; the app does not model the Progenitor bonus.
 - AoE targeting modes (hidden on the site too).
 - GPU batching, the external-runner hooks, the `autoBuildProgress` event and the `__lastAutoBuildResult` global.
@@ -633,7 +633,7 @@ What shipped, and where it differs from the plan in section 9. Sections 1-8 stil
 
 ### 12.2 Decisions
 
-1. **Faithful pipeline for guns** (primaries and secondaries): steps 1.5, 1.55 (Secondary Enervate), 2.1, 2.2, 3, 4, 5, 6, 7, 7.5, 8 and 9, with the site's run counts, progress percentages, pools, targets, the elemental blacklist checks, the refinement rules and the messages. Melee, stances, companions, archguns, kitguns, Incarnon and Progenitor steps stay out (section 8).
+1. **Faithful pipeline for guns** (primaries and secondaries): steps 1.5, 1.55 (Secondary Enervate), 2.1, 2.2, 3, 4, 5, 6, 7, 7.5, 8 and 9, with the site's run counts, progress percentages, pools, targets, the elemental blacklist checks, the refinement rules and the messages. Melee, stances, companions, archguns, kitguns and Progenitor steps stay out (section 8); the Incarnon steps 2.7 and 4.3 were ported later (docs/port-incarnon.md section 7).
 2. **Common random numbers.** With Luck Averaged on, every evaluation uses seeds 1..n (decision 9.1.2). Results are reproducible: the same build and settings give the same picks, regardless of the number of engines. With it off, seeds are random.
 3. **Locks, as on the site, plus Keep.** Filled slots and a filled arcane slot are locks, and the Exilus slot is never filled. In the dialog the user can untick kept mods (or the arcane) to have them replaced. That is the natural form of "lock a slot": the run's starting build is the build minus the unticked mods. The Exilus mod always stays.
 4. **A result view, then Apply.** The site overwrites the build at once with no preview and no undo. We show the proposed build against the current one (DPS, changed slots with card art) and apply it as one undo step, with the toast's Undo. The site's conditional reset (new mods at max stacks) is the app's default: a slot without `stacks` is at max.
@@ -725,7 +725,7 @@ The default run is about 3-4× faster than section 10 estimated. The 5 s search 
 
 ### 12.6 Gaps
 
-- No melee, companions, archguns, kitguns or Incarnon evolutions (section 8).
+- No melee, companions, archguns or kitguns (section 8). ~~Incarnon evolutions~~: ported, perks included (docs/port-incarnon.md).
 - ~~Galvanized and other conditional mods are scored on their base stats only~~: fixed (docs/port-weapon-stats.md 3). Candidates are scored at max stacks and kept slots at their own stacks, as on the site; the result names them with their stacks ("Scored with Galvanized Chamber at 5 stacks (On Kill), as underframe.site does").
 - ~~Weapon-specific elemental augments are not forced in~~: fixed. The weapon's elemental augments (a weapon-family augment whose conditional adds an element: Biotic Rounds on the AX-52) go in at max rank and are kept, and the log says so.
 - Progenitor bonuses, combined fire modes and weapon passives count in every candidate, as in the Readout (docs/port-weapon-stats.md).

@@ -12,7 +12,7 @@ import { actions, store } from '../controller.js';
 import { useApp, useDerived } from '../hooks.js';
 import { slotSizeFor } from '../layout.js';
 import {
-  ARCANE_SLOT, EXILUS_SLOT, INCARNON_NOTE, KITGUN_ARCANE_SLOT, WEAPON_GROUPS, buildCapacity, isIncarnonMode, weaponMatches,
+  ARCANE_SLOT, EXILUS_SLOT, KITGUN_ARCANE_SLOT, WEAPON_GROUPS, buildCapacity, weaponMatches,
 } from '../model.js';
 import { arcaneSlotCount } from '../../shared/arcanes.js';
 import { isKitgun } from '../../shared/mods.js';
@@ -199,7 +199,6 @@ function FireMode() {
   const picked = useApp(s => s.build?.modeName ?? '');
   const modeName = stats?.modeId || picked;
   const modes = (stats?.choices ?? []).map(c => ({ mode_name: c.id, label: c.label, combined: c.combined }));
-  const hint = isIncarnonMode(modeName) ? INCARNON_NOTE : undefined;
   if (modes.length <= 1) return <Body1 className={styles.modeText}>{modes[0]?.label ?? 'Normal Attack'}</Body1>;
   if (modes.length > 3) {
     const own = modes.filter(m => !m.combined);
@@ -215,7 +214,7 @@ function FireMode() {
       </Dropdown>
     );
   }
-  const toolbar = (
+  return (
     <Toolbar
       aria-label="Fire mode"
       className={styles.modes}
@@ -228,7 +227,6 @@ function FireMode() {
       ))}
     </Toolbar>
   );
-  return hint ? <Tooltip content={hint} relationship="description">{toolbar}</Tooltip> : toolbar;
 }
 
 /** Catalyst, Forma reset and Remove all: the capacity line's menu (the build mechanics, in one place). */

@@ -108,7 +108,8 @@ mod against the site's rules finds no difference. Adhesive Blast's card art was 
 
 ## 8. Not ported
 
-- Incarnon evolutions (perks), kitguns, melee, companions and archguns (out of scope, as before).
+- Kitguns, melee, companions and archguns (out of scope, as before). Incarnon evolutions (perks) are ported now:
+  docs/port-incarnon.md.
 - Primary Compression's radius and damage effects (the arcane is equipped but its compression is not modelled).
 - The site's distance slider: the app simulates at the start of a weapon's falloff, the site's default.
 - User-made combined modes (the site's custom fire mode editor); the data's combined modes are offered.

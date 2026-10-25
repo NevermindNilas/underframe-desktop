@@ -16,7 +16,7 @@ import { resolveEnemy } from './model.js';
  * `mode` is its stats: a combined mode's first part.
  * `choices` are the modes the build can pick (modeChoices()).
  * @returns {{ weapon, reload, modes: object[], modifiers: object, mode: object|null, modeId: string, selectable: object[], choices,
- *   enemy, arcanes, arcaneNotes, external, externalNotes, conditionals } | null}
+ *   enemy, arcanes, arcaneNotes, external, externalNotes, conditionals, incarnon } | null}
  */
 export function buildStats(ctx, build, modSlots = build.mods) {
   const weapon = ctx.weaponByName.get(build.weaponName);
@@ -36,11 +36,13 @@ export function buildStats(ctx, build, modSlots = build.mods) {
   const externalStatuses = targetStatusesOf(ctx, build, passives);
   const modConditionals = resolveModConditionals(modSlots, weapon, ctx.data);
   const conditionals = { ...modConditionals, totals: mergeExternalTotals(modConditionals.totals, passives.totals) };
-  const { modes, modifiers } = computeWeaponStats(weapon, modSlots, {
+  const modeId = resolveModeId(ctx.data, weapon, modSlots, build.modeName);
+  // Incarnon perks: their conditional defaults read the pick, the target's statuses and the buffs' elements.
+  const { modes, modifiers, incarnon } = computeWeaponStats(weapon, modSlots, {
     modsByName: ctx.index.byName, reload, targetFaction: enemy.faction, arcanes, external, externalStatuses, conditionals,
     progenitor: effectiveProgenitor(weapon, build.progenitor), data: ctx.data,
+    incarnon: build.incarnon ?? null, incarnonContext: { modeId, customFireModes: combinedModes(ctx.data, weapon), buffs: build.externalBuffs ?? [] },
   });
-  const modeId = resolveModeId(ctx.data, weapon, modSlots, build.modeName);
   const base = baseModeName(ctx.data, weapon, modeId);
   const mode = modes.find(m => m.mode_name === base) ?? modes[0] ?? null;
   return {
@@ -50,6 +52,8 @@ export function buildStats(ctx, build, modSlots = build.mods) {
     externalStatuses,
     externalNotes: build.externalBuffs?.length ? externalBuffNotes(build.externalBuffs, ctx.data, weapon, build.modeName) : [],
     conditionals,
+    // The Incarnon perks as applied (incarnon.js incarnonEffects(), with every conditional's state), or null.
+    incarnon,
     // Health Enkaus's passive took off the target; the displayed DPS adds it back over the kill time, as on the site.
     removedHp: resolved.hp - enemy.hp,
   };
@@ -87,5 +91,6 @@ export function engineInputFor(ctx, build, { appStateRef, debugLog = false, modS
     externalStatuses: stats.externalStatuses,
     conditionals: stats.conditionals,
     customFireModes: combinedModes(ctx.data, stats.weapon),
+    incarnon: stats.incarnon,
   });
 }

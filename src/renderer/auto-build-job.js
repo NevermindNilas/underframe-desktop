@@ -5,6 +5,7 @@ import { createContext, resolveEnemy, SIM_SEEDS } from './model.js';
 import { buildAppState } from '../shared/engine-input.js';
 import { targetStatusesOf } from './sim.js';
 import { normalizeAutoBuildSettings } from '../shared/auto-build-settings.js';
+import { incarnonAfterAutoBuild } from '../shared/incarnon.js';
 import {
   candidateInput, capacityPlan, chunkJobs, conditionalModStacks, createAutoBuildEnv, formaChanges, meansOf, runAutoBuild,
 } from '../shared/auto-build.js';
@@ -45,8 +46,8 @@ export function poolScorer({ ctx, build, settings, pool }) {
   return {
     env,
     score: jobs => runTasks(jobs, j => candidateInput(env, j), env.metric),
-    readout: (modLists, arcanes = build.arcanes ?? []) => runTasks(
-      modLists.map(mods => ({ mods, arcanes, seeds: SIM_SEEDS })),
+    readout: (modLists, arcanes = build.arcanes ?? [], incarnon = build.incarnon ?? null) => runTasks(
+      modLists.map(mods => ({ mods, arcanes, incarnon, seeds: SIM_SEEDS })),
       j => candidateInput(env, j, { maxTime: build.simTime, plain: true }),
       'avgDps',
     ),
@@ -77,13 +78,16 @@ export async function runAutoBuildJob({ ctx, build, start, settings: rawSettings
   if (!succeeded && failed) throw new Error(`The engine rejected every candidate: ${firstError ?? 'no reason given'}`);
   // Before and after at the build's own settings: what the Readout shows.
   onProgress({ percent: 100, step: 'Comparing with the current build', detail: '', runs: result.runs });
+  // Perks it picked for empty evolutions come with every conditional part on, as the site writes them.
+  const incarnon = incarnonAfterAutoBuild(data, ctx.weaponByName.get(build.weaponName), build.incarnon ?? null, result.incarnon ?? null);
   const [before] = await readout([build.mods]);
-  const [after] = await readout([result.mods], result.arcanes);
+  const [after] = await readout([result.mods], result.arcanes, incarnon);
   // Cost Control's plan for the result: the slots to re-polarise so it fits (Apply writes them in the same undo step).
   const plan = settings.costControlEnabled && result.changed ? capacityPlan(env, result.mods) : null;
   return {
     mods: result.mods,
     arcanes: result.arcanes,
+    incarnon,
     formaPlan: plan ? formaChanges(env, plan) : [],
     planCapacity: plan ? { used: plan.used, capacity: plan.capacity, added: plan.added } : null,
     // Conditional mods (Galvanized and the like) are scored at the stacks their slots assume (max for new ones).

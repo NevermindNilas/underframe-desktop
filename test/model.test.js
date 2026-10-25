@@ -214,11 +214,10 @@ test('the best-mod search is keyed on the build without the searched slot', asyn
   assert.notEqual(sweepKeyOf(ctx3, { ...b, simTime: 60 }, 1), key);
 });
 
-test('incarnon modes are flagged as partly simulated', async () => {
-  const { isIncarnonMode } = await import('../src/renderer/model.js');
-  assert.equal(isIncarnonMode('Incarnon Form'), true);
-  assert.equal(isIncarnonMode('Normal Attack'), false);
-  assert.equal(isIncarnonMode(undefined), false);
+test('Incarnon forms are no longer flagged as partly simulated: their evolutions are (docs/port-incarnon.md)', async () => {
+  const model = await import('../src/renderer/model.js');
+  assert.equal(model.INCARNON_NOTE, undefined);
+  assert.equal(model.isIncarnonMode, undefined);
 });
 
 // ---- Arcanes ----------------------------------------------------------------------------------------------------
