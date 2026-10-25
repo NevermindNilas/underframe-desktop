@@ -11,6 +11,7 @@
     "start": "npm run build:renderer && electron .",
     "test": "node --test \"test/*.test.js\"",
     "dist": "npm run build:renderer && electron-builder --win",
+    "release": "node scripts/release.mjs",
     "update-core": "node core/scripts/update.mjs"
   },
   "devDependencies": {
@@ -53,7 +54,21 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Underframe-Desktop-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Underframe-Desktop-${version}-Portable.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "NevermindNilas",
+        "repo": "underframe-desktop"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10"
   }
 }

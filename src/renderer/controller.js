@@ -104,6 +104,8 @@ export const store = createStore({
   appInfo: null,
   upstream: null,
   upstreamDismissed: false,
+  // App updates, as main reports them (uf.updates): { mode, status, version, available, percent, message, ... } or null.
+  updates: null,
   savedBuilds: [],
   savedStatus: 'loading', // 'loading' | 'ready' | 'error'
   savedError: null,
@@ -2075,6 +2077,36 @@ export const actions = {
     }
   },
 
+  /** A check the user asked for (About › Check for updates); the status line shows the outcome. */
+  async checkForUpdates() {
+    try {
+      setUpdateState(await uf.updates.check());
+    } catch (e) {
+      store.set(s => ({ updates: { ...s.updates, status: 'error', message: `Couldn't check for updates: ${errorText(e)}` } }));
+    }
+  },
+
+  async setAutoUpdates(on) {
+    try {
+      setUpdateState(await uf.updates.setAuto(on === true));
+    } catch (e) {
+      notify({ intent: 'error', title: "Couldn't save the update setting.", body: errorText(e) });
+    }
+  },
+
+  /** Install the downloaded update: unsaved changes are asked about first, then the app restarts. */
+  async restartToUpdate() {
+    if (!(await confirmLeave())) return;
+    try {
+      if (!(await uf.updates.restart())) {
+        const u = store.get().updates;
+        notify({ intent: 'warning', title: u?.status === 'error' ? u.message : "The update isn't ready to install." });
+      }
+    } catch (e) {
+      notify({ intent: 'error', title: "Couldn't restart to update.", body: errorText(e) });
+    }
+  },
+
   dismissUpstream() {
     const v = store.get().upstream?.remote;
     store.set({ upstreamDismissed: true });
@@ -2203,6 +2235,33 @@ function installErrorHandlers() {
   });
 }
 
+/** The update version a toast was shown for (one toast per version). */
+let updateToastFor = null;
+
+/** Keep main's update state for the About dialog; a downloaded update (or, portable, a newer release) gets a toast. */
+function setUpdateState(updates) {
+  if (!updates || typeof updates !== 'object') return;
+  store.set({ updates });
+  const v = updates.available;
+  if (!v || v === updateToastFor) return;
+  if (updates.status === 'ready') {
+    updateToastFor = v;
+    notify({
+      intent: 'success', title: `Update ${v} is ready`, body: 'It installs when you quit the app.',
+      action: { label: 'Restart to update', run: () => actions.restartToUpdate() },
+      // It stays until dismissed: the check runs in the background, often while the window isn't looked at.
+      timeout: -1,
+    });
+  } else if (updates.status === 'available' && updates.mode === 'notify') {
+    updateToastFor = v;
+    notify({
+      intent: 'info', title: `Update ${v} is available`, body: "The portable app doesn't update itself.",
+      action: { label: 'Open the release page', run: () => actions.openExternal(updates.releaseUrl) },
+      timeout: -1,
+    });
+  }
+}
+
 function installCloseGuard() {
   uf.onCloseRequest?.(() => {
     if (store.get().phase !== 'ready' || !isDirty()) {
@@ -2266,6 +2325,8 @@ export async function boot({ onReady } = {}) {
     timings.readyMs = Math.round(performance.now() - t0);
 
     uf.appInfo().then(appInfo => store.set({ appInfo }), () => {});
+    uf.updates?.onState?.(setUpdateState);
+    uf.updates?.state?.().then(setUpdateState, () => {});
     uf.checkUpstream().then(upstream => {
       const dismissed = !automated && upstream?.remote && storageGet(UPSTREAM_DISMISSED_KEY, null) === upstream.remote;
       store.set({ upstream, upstreamDismissed: Boolean(dismissed) });

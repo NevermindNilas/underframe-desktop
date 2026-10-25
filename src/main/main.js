@@ -11,6 +11,8 @@ import { createBuildsStore } from './builds-store.js';
 import { createBuffPresetsStore } from './buff-presets-store.js';
 import { createAutoBuildStore } from './auto-build-store.js';
 import { createRivensStore } from './rivens-store.js';
+import { createUpdateSettingsStore } from './update-settings-store.js';
+import { createUpdater, testFeedUrl, updateMode } from './updater.js';
 import { createFiles } from './files.js';
 import { checkUpstream, isAllowedExternal } from './external.js';
 import { SMOKE_ARG, attachSmoke, isSmoke } from './smoke.js';
@@ -46,6 +48,7 @@ let buffPresets = null;
 let autoBuild = null;
 let rivens = null;
 let files = null;
+let updates = null;
 let backdrop = 'solid';
 
 const appRoot = () => app.getAppPath();
@@ -172,6 +175,14 @@ function installCloseGuard(win) {
     win.webContents.send('uf:close-request');
   });
   win.closeGuard = {
+    /** Restart to update: the renderer has already asked about unsaved changes, so the next close goes through. */
+    allow() {
+      allowClose = true;
+    },
+    /** The update installer couldn't start after all: closing asks about unsaved changes again. */
+    restore() {
+      allowClose = smoke;
+    },
     answer(kind) {
       clearTimeout(waiting);
       waiting = null;
@@ -236,6 +247,11 @@ function registerIpc() {
   handle('uf:files:saveText', req => files.saveText(req));
   handle('uf:files:openText', req => files.openText(req));
   handle('uf:openExternal', url => openExternal(url));
+  // App updates (updater.js): the state, a check the user asked for, Restart to update and the automatic-checks setting.
+  handle('uf:updates:state', () => updates.state());
+  handle('uf:updates:check', () => updates.check({ manual: true }));
+  handle('uf:updates:restart', () => updates.restart());
+  handle('uf:updates:setAuto', on => updates.setAuto(on === true));
   // Screenshot recognition: 'uf:ocr:recognize' and 'uf:ocr:captureGame'.
   registerOcrIpc(handle);
   handle('uf:closeAnswer', kind => {
@@ -294,6 +310,31 @@ if (primary) {
   app.whenReady().then(start);
 }
 
+/**
+ * Updates from GitHub Releases, in the packaged app only. Testing: UF_UPDATE_FEED=http://127.0.0.1:<port>/ checks a
+ * local feed instead and prints each state as `UF_UPDATE_STATE <json>`; with UF_UPDATE_TEST_RESTART=1 a downloaded
+ * update is installed straight away, as if Restart to update had been clicked.
+ */
+function createAppUpdater() {
+  const feedUrl = testFeedUrl();
+  return createUpdater({
+    mode: updateMode({ packaged: app.isPackaged, automated }),
+    version: app.getVersion(),
+    settings: createUpdateSettingsStore(app.getPath('userData')),
+    // Loaded on the first check only (electron-updater is CommonJS).
+    loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
+    feedUrl,
+    restartWhenReady: Boolean(feedUrl) && process.env.UF_UPDATE_TEST_RESTART === '1',
+    beforeRestart: () => mainWindow?.closeGuard?.allow(),
+    restartFailed: () => mainWindow?.closeGuard?.restore(),
+    onState: state => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('uf:updates:state', state);
+      if (feedUrl) process.stdout.write(`UF_UPDATE_STATE ${JSON.stringify(state)}\n`);
+    },
+    log: line => console.warn(line),
+  });
+}
+
 function start() {
   nativeTheme.themeSource = themeSourceFrom(process.env);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED_PERMISSIONS.has(permission)));
@@ -304,8 +345,10 @@ function start() {
   autoBuild = createAutoBuildStore(app.getPath('userData'));
   rivens = createRivensStore(app.getPath('userData'));
   files = createFiles({ window: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null), automated });
+  updates = createAppUpdater();
   registerIpc();
   Menu.setApplicationMenu(buildMenu());
   mainWindow = createWindow();
+  updates.start();
   nativeTheme.on('updated', () => syncChrome(mainWindow));
 }

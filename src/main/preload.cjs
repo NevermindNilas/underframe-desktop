@@ -39,6 +39,21 @@ contextBridge.exposeInMainWorld('uf', {
   },
   openExternal: url => call('uf:openExternal', String(url)),
   /**
+   * App updates (the packaged app only). state() and check() resolve to { mode, status, version, available, percent,
+   * message, releasePage, auto, checkedAt, releaseUrl }; restart() installs a downloaded update (false if none);
+   * setAuto(on) turns the automatic checks on or off; onState(fn) follows every change.
+   */
+  updates: {
+    state: () => call('uf:updates:state'),
+    check: () => call('uf:updates:check'),
+    restart: () => call('uf:updates:restart'),
+    setAuto: on => call('uf:updates:setAuto', on === true),
+    onState: fn => {
+      ipcRenderer.removeAllListeners('uf:updates:state');
+      ipcRenderer.on('uf:updates:state', (_e, state) => fn(state));
+    },
+  },
+  /**
    * Screenshot recognition. recognize(bytes): PNG/JPEG bytes (Uint8Array or ArrayBuffer, at most 25 MB) to the
    * OCR result { width, height, language, lines, cards, passes, ms }; captureGame(): the Warframe window as
    * { png: Uint8Array, width, height, title }. Both resolve to { error: { code, message } } on failure.

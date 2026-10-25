@@ -15,6 +15,12 @@ function readDevBuilds() {
   }
 }
 
+/** Updates outside the desktop app: never checked. */
+const DEV_UPDATES = {
+  mode: 'off', status: 'off', version: 'dev', available: null, percent: null, message: 'Updates are checked only in the installed app.',
+  releasePage: false, auto: true, checkedAt: null, releaseUrl: 'https://github.com/NevermindNilas/underframe-desktop/releases/latest',
+};
+
 function writeDevBuilds(list) {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); } catch { /* storage unavailable */ }
 }
@@ -73,6 +79,13 @@ const fallback = {
     openText: async () => ({ cancelled: true }),
   },
   openExternal: async url => Boolean(window.open(url, '_blank', 'noopener')),
+  updates: {
+    state: async () => ({ ...DEV_UPDATES }),
+    check: async () => ({ ...DEV_UPDATES }),
+    restart: async () => false,
+    setAuto: async on => ({ ...DEV_UPDATES, auto: on === true }),
+    onState: () => {},
+  },
   ocr: {
     recognize: async () => ({ error: { code: 'unsupported-platform', message: 'Only available in the desktop app' } }),
     captureGame: async () => ({ error: { code: 'game-not-found', message: 'Only available in the desktop app' } }),

@@ -1,7 +1,7 @@
 // Blocking dialogs: "Save changes?" when leaving a dirty build, About, Keyboard shortcuts, and Merge or Replace when
 // importing rivens.
 import {
-  Body1, Button, Caption1, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link,
+  Body1, Button, Caption1, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle, Link,
   Subtitle2, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, makeStyles, tokens,
 } from '@fluentui/react-components';
 import { DismissRegular } from '@fluentui/react-icons';
@@ -68,6 +68,8 @@ const useStyles = makeStyles({
   group: { marginTop: tokens.spacingVerticalM },
   list: { margin: 0, paddingLeft: tokens.spacingHorizontalL },
   shortcuts: { maxHeight: '60vh', overflowY: 'auto' },
+  updates: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: tokens.spacingVerticalXS },
+  updateRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalM },
 });
 
 function closeAction(onClick) {
@@ -126,6 +128,32 @@ function RunDialog() {
   );
 }
 
+/** About › Updates: what the updater is doing (a polite live region), Check for updates and the automatic setting. */
+function UpdateStatus() {
+  const styles = useStyles();
+  const u = useApp(s => s.updates);
+  const off = !u || u.mode === 'off';
+  const busy = u?.status === 'checking' || u?.status === 'downloading' || u?.status === 'restarting';
+  return (
+    <div className={styles.updates}>
+      <Body1>
+        <span role="status" data-testid="update-status">{u?.message ?? '…'}</span>
+        {u?.status === 'downloading' && u.percent != null ? ` ${u.percent}%` : ''}
+      </Body1>
+      {u?.checkedAt && !busy ? <Caption1>Last checked {fmtDate(u.checkedAt)}</Caption1> : null}
+      <div className={styles.updateRow}>
+        <Button disabledFocusable={off || busy} onClick={() => actions.checkForUpdates()} data-testid="update-check">Check for updates</Button>
+        {u?.status === 'ready' ? <Button onClick={() => actions.restartToUpdate()} data-testid="update-restart">Restart to update</Button> : null}
+        {u?.releasePage ? <Link onClick={() => actions.openExternal(u.releaseUrl)}>Releases page</Link> : null}
+      </div>
+      <Checkbox
+        label="Check for updates automatically" checked={u?.auto ?? true}
+        onChange={(_e, d) => actions.setAutoUpdates(d.checked === true)} data-testid="update-auto"
+      />
+    </div>
+  );
+}
+
 function AboutDialog() {
   const styles = useStyles();
   const info = useApp(s => s.appInfo);
@@ -139,6 +167,7 @@ function AboutDialog() {
           <DialogContent className={styles.about}>
             <dl className={styles.dl}>
               <dt><Caption1>App</Caption1></dt><dd className={styles.dd}><Body1>{info?.version ?? '…'}</Body1></dd>
+              <dt><Caption1>Updates</Caption1></dt><dd className={styles.dd}><UpdateStatus /></dd>
               <dt><Caption1>Electron</Caption1></dt><dd className={styles.dd}><Body1>{info?.electron ?? '…'} (Chrome {info?.chrome ?? '…'})</Body1></dd>
               <dt><Caption1>Game data</Caption1></dt>
               <dd className={styles.dd}><Body1>{manifest?.dataVersion ?? 'unknown'}{manifest?.fetchedAt ? `, fetched ${fmtDate(manifest.fetchedAt)}` : ''}{upstream?.outdated ? '. Newer data is available: update the app to get it.' : ''}</Body1></dd>

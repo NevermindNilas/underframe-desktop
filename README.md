@@ -16,6 +16,12 @@ Windows 10 or 11, 64-bit. The app isn't code-signed, so Windows SmartScreen may 
 it: choose **More info**, then **Run anyway**. Everything runs on your PC: builds and rivens are saved
 locally, and screenshots are read with Windows' own text recognition, never uploaded.
 
+The installed app keeps itself up to date: it asks github.com for a newer release 10 seconds after it starts
+and every 6 hours, downloads it in the background and installs it when you choose **Restart to update** or
+quit the app. About › **Check for updates automatically** turns the checks off; **Check for updates** checks
+now. The portable app can't replace itself: it only tells you a newer version is out. Versions from before
+the updater (2026.10.25) need the new installer once.
+
 Versions are named by their release date (`2026.10.25`).
 
 ## Features
@@ -43,6 +49,7 @@ Versions are named by their release date (`2026.10.25`).
 - Enemy HP-over-time chart
 - Compare tray for side-by-side builds
 - Best-mod sweep: tries candidate mods in a slot and ranks them in the gallery
+- Automatic updates from GitHub Releases (the installer; the portable app says when one is out)
 
 ## Building from source
 
@@ -74,6 +81,7 @@ that does not need the engine, but the app cannot load data or run simulations.
 | `npm run build:renderer` | Build the React renderer with Vite into `build/renderer/` |
 | `npm test` | Run the test suite (`node --test`) |
 | `npm run dist` | Build the renderer, then an NSIS installer and a portable exe into `dist/` |
+| `npm run release -- <notes.md>` | Build a release and upload it to GitHub as a draft; `--dry-run` only checks and prints the plan. See [docs/releasing.md](docs/releasing.md) |
 | `npm run update-core` | Refresh `core/` from underframe.site (maintainers with core access); then commit inside `core/` and bump the submodule pointer here |
 
 ## Project structure
@@ -84,7 +92,8 @@ src/renderer/  UI: React 19 + Fluent UI React v9 (ui/*.jsx), the app controller 
                model modules, the engine Web Worker and its client
 src/shared/    Pure logic: damage types, factions, enemy scaling, mods, stats, engine input
 build/         Vite output (gitignored); the app serves build/renderer
-docs/          UX spec for the Fluent 2 UI
+docs/          UX spec for the Fluent 2 UI, port specs, how to release
+scripts/       release.mjs: builds a release and uploads it to GitHub as a draft
 test/          node --test suites
 core/          Private submodule: Underframe engine (.wasm + loader) and data.json
 ```
@@ -101,7 +110,10 @@ core/          Private submodule: Underframe engine (.wasm + loader) and data.js
   (`script-src 'self'`; inline styles are allowed for Fluent's CSS-in-JS).
 - The renderer is sandboxed (`contextIsolation`, `sandbox`, no Node); a small
   preload exposes `window.uf` for app info, saved builds, upstream version
-  checks and allowlisted external links.
+  checks, app updates and allowlisted external links.
+- Updates come from GitHub Releases through `electron-updater` (`src/main/updater.js`).
+  Only the packaged app checks, never development, smoke or scene runs. Automatic
+  checks fail silently; About › Check for updates says what happened.
 - The engine runs in a classic Web Worker; only that worker's CSP allows
   `unsafe-eval`/`wasm-unsafe-eval`, which the Emscripten/embind loader needs.
 - Game data is sent to the engine once via `cache_app_state`; each simulation
@@ -133,6 +145,8 @@ core/          Private submodule: Underframe engine (.wasm + loader) and data.js
 | `UF_SECOND_MONITOR=1` | Opens the window at x=-3400, y=40. |
 | `UF_NO_CARD_IMAGES=1` | Draws every card as a text card, as without `core/images`. |
 | `UF_SMOKE_OCR_IMAGE=<file>` | With `UF_SMOKE=1`: also runs real screenshot recognition on a local screenshot. |
+| `UF_UPDATE_FEED=http://127.0.0.1:<port>/` | Packaged app only: checks this local update feed (a folder with `latest.yml` and the installer it names) instead of GitHub, and prints each update state as `UF_UPDATE_STATE <json>`. Only `http://127.0.0.1` and `http://localhost` URLs are accepted. |
+| `UF_UPDATE_TEST_RESTART=1` | With `UF_UPDATE_FEED`: installs a downloaded update straight away, as **Restart to update** does. |
 
 
 ## Credits
