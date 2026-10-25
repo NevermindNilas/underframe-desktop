@@ -15,11 +15,14 @@ import { fmtInt } from '../format.js';
 import { setSlot, slotLabel } from '../model.js';
 import { buildStats } from '../sim.js';
 import { paperDps } from '../sheet.js';
-import { RIVEN_MAX_RANK, displayUnit, rivenFamily, rivenStatCatalogue, rivenStatUnit } from '../../shared/rivens.js';
+import { RIVEN_MAX_RANK, RIVEN_POLARITIES, displayUnit, rivenFamily, rivenStatCatalogue, rivenStatUnit } from '../../shared/rivens.js';
 import { canAddRow, draftFrom, draftIssues, emptyRow, rowRange } from '../riven-draft.js';
+import { PolarityGlyph, polarityName } from './art.jsx';
 import { DeltaText } from './common.jsx';
 
-const ABOUT = 'Enter the riven as the game shows it: its disposition (the dots on the weapon, 1.2 if unsure), its rank and each stat\'s value. Changing the disposition or rank keeps the values you typed. Drain is 10 + rank, Omni polarity.';
+const ABOUT = 'Enter the riven as the game shows it: its disposition (the dots on the weapon, 1.2 if unsure), its rank, its polarity (the symbol at the top right of the card) and each stat\'s value. Changing the disposition or rank keeps the values you typed. Drain is 10 + rank, halved in a slot of its polarity.';
+/** The polarity choices: not set (Omni, as on underframe.site), then the three a riven can have in game. */
+const POLARITY_CHOICES = [{ value: '', text: 'Not set (Omni)' }, ...RIVEN_POLARITIES.map(p => ({ value: p, text: polarityName(p) }))];
 const RANKS = Array.from({ length: RIVEN_MAX_RANK + 1 }, (_, i) => i);
 
 const useStyles = makeStyles({
@@ -198,7 +201,7 @@ function RivenEditor({ dialog }) {
           {dialog.initial ? (
             <MessageBar intent={dialog.note ? 'warning' : 'info'} layout="multiline" style={{ flexShrink: 0 }} data-testid="riven-screenshot-note">
               <MessageBarBody>
-                Read from the screenshot: check each value, the disposition (the card doesn't show it) and the rank.{dialog.note ? ` ${dialog.note}` : ''}
+                Read from the screenshot: check each value, the polarity (its symbol isn't read), the disposition (the card doesn't show it) and the rank.{dialog.note ? ` ${dialog.note}` : ''}
                 {noSlot ? ' Every slot is full, so Save keeps it in your rivens.' : ''}
               </MessageBarBody>
             </MessageBar>
@@ -212,9 +215,27 @@ function RivenEditor({ dialog }) {
             >
               <Input value={draft.disposition} inputMode="decimal" onChange={(_e, d) => edit({ disposition: d.value })} data-riven-focus="disposition" data-testid="riven-disposition" />
             </Field>
-            <Field label="Rank" validationState={showErrors && issues.rank ? 'error' : 'none'} validationMessage={showErrors ? issues.rank ?? undefined : undefined} hint={`Drain ${10 + draft.rank}, Omni polarity`}>
+            <Field label="Rank" validationState={showErrors && issues.rank ? 'error' : 'none'} validationMessage={showErrors ? issues.rank ?? undefined : undefined} hint={`Drain ${10 + draft.rank}`}>
               <Dropdown value={String(draft.rank)} selectedOptions={[String(draft.rank)]} onOptionSelect={(_e, d) => edit({ rank: Number(d.optionValue) })} data-riven-focus="rank">
                 {RANKS.map(r => <Option key={r} value={String(r)}>{String(r)}</Option>)}
+              </Dropdown>
+            </Field>
+            <Field label="Polarity" hint={draft.polarity ? `Halved in a ${polarityName(draft.polarity)} slot` : 'Counts as Omni: halved in any polarised slot'}>
+              <Dropdown
+                value={POLARITY_CHOICES.find(c => c.value === draft.polarity)?.text ?? ''}
+                selectedOptions={[draft.polarity]}
+                onOptionSelect={(_e, d) => edit({ polarity: d.optionValue ?? '' })}
+                data-riven-focus="polarity"
+                data-testid="riven-polarity"
+              >
+                {POLARITY_CHOICES.map(c => (
+                  <Option key={c.value || 'none'} value={c.value} text={c.text}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: tokens.spacingHorizontalXS }}>
+                      {c.value ? <PolarityGlyph code={c.value} size={16} /> : null}
+                      {c.text}
+                    </span>
+                  </Option>
+                ))}
               </Dropdown>
             </Field>
           </div>

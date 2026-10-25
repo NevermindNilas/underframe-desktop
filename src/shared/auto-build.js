@@ -19,7 +19,7 @@ import { indexConditionalMods, modConditionalControls, modStacksText, resolveMod
 import { baseModeName, combinedModes, modesFired, resolveModeId } from './fire-modes.js';
 import { resolveWeaponPassives } from './weapon-passives.js';
 import { capacityOf, effectiveSlotPolarities, innateSlotPolarities, normalizePolarity, slotDrain } from './capacity.js';
-import { RIVEN_CAPACITY_MOD } from './rivens.js';
+import { rivenCapacityMod, rivenPolarity } from './rivens.js';
 import {
   ELEMENT_PRESETS, blockedByElementalBlacklist, metricOf, modStatFamilies, parseTargetList, runsFor, targetLabel,
 } from './auto-build-settings.js';
@@ -314,7 +314,7 @@ export function capacityPlan(env, mods) {
   const budget = Math.max(0, maxForma - formaOf(effective));
   const drainAt = (i, p) => {
     const s = mods[i];
-    const mod = s && (s.isRiven ? RIVEN_CAPACITY_MOD : env.index.byName.get(s.name));
+    const mod = s && (s.isRiven ? rivenCapacityMod(s) : env.index.byName.get(s.name));
     return mod ? slotDrain(mod, s.rank, p).drain : 0;
   };
   for (let guard = 0; guard <= SLOT_COUNT; guard++) {
@@ -326,8 +326,9 @@ export function capacityPlan(env, mods) {
     for (let i = 0; i < SLOT_COUNT; i++) {
       const s = mods[i];
       const mod = s && env.index.byName.get(s.name);
-      // An Omni riven matches any polarity but Umbra: an unpolarised (or Umbra) slot gets Madurai.
-      const want = s?.isRiven ? (pol[i] && pol[i] !== 'AP_UMBRA' ? pol[i] : RIVEN_FORMA_POLARITY) : normalizePolarity(mod?.Polarity);
+      // A riven wants its own polarity; one without (Omni) matches any but Umbra: an unpolarised (or Umbra) slot gets Madurai.
+      const omni = pol[i] && pol[i] !== 'AP_UMBRA' ? pol[i] : RIVEN_FORMA_POLARITY;
+      const want = s?.isRiven ? rivenPolarity(s) ?? omni : normalizePolarity(mod?.Polarity);
       if (!want || want === pol[i]) continue;
       const next = pol.slice();
       next[i] = want;
@@ -342,7 +343,7 @@ export function capacityPlan(env, mods) {
   return null;
 }
 
-/** The polarity the Forma plan gives a riven's slot (an Omni riven halves its drain in any but Umbra). */
+/** The polarity the Forma plan gives the slot of a riven without a polarity (Omni: halved in any but Umbra). */
 export const RIVEN_FORMA_POLARITY = 'AP_ATTACK';
 
 /** Whether mods fit the capacity with at most `maxForma` Forma (capacityPlan() finds a plan). */

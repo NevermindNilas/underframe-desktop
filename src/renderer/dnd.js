@@ -3,7 +3,7 @@
 import { maxRank } from '../shared/mods.js';
 import { slotDrain } from '../shared/capacity.js';
 import { isArcaneCompatible } from '../shared/arcanes.js';
-import { RIVEN_CAPACITY_MOD } from '../shared/rivens.js';
+import { rivenCapacityMod } from '../shared/rivens.js';
 import { arcaneIndexOf, fitsSlot, isArcaneSlot, slotBlockReason, slotLabel } from './model.js';
 
 export const MOD_MIME = 'application/x-uf-mod';
@@ -29,7 +29,7 @@ export function dropInfo(ctx, build, drag, slot, polarities) {
   }
   if (isArcaneSlot(slot)) return { accept: false, reason: "Mods don't go in the arcane slot", drain: null, effect: null, label: '' };
   // A riven moved between slots drains as its pseudo-mod (it is not in data.mods).
-  const mod = ctx.index.byName.get(drag.name) ?? (Number.isInteger(drag.from) && build.mods[drag.from]?.isRiven ? RIVEN_CAPACITY_MOD : null);
+  const mod = ctx.index.byName.get(drag.name) ?? (Number.isInteger(drag.from) && build.mods[drag.from]?.isRiven ? rivenCapacityMod(build.mods[drag.from]) : null);
   if (!mod) return { accept: false, reason: 'Unknown mod', drain: null, effect: null, label: '' };
   const from = Number.isInteger(drag.from) ? drag.from : null;
   if (from === slot) return { accept: false, reason: null, drain: null, effect: null, label: '' };
@@ -45,7 +45,7 @@ export function dropInfo(ctx, build, drag, slot, polarities) {
   const { drain, effect } = slotDrain(mod, rank, polarities?.[slot]);
   if (reason) return { accept: false, reason, drain: null, effect: null, label: '' };
   const label = target && from != null ? `Drop to swap with ${target.name}` : target ? `Drop to replace ${target.name} (drain ${drain})` : `Drop to equip (drain ${drain})`;
-  // The dragged item's own polarity for the projected plate (a riven's is Omni).
+  // The dragged item's own polarity for the projected plate (a riven's own, or Omni when it has none).
   return { accept: true, reason: null, drain, effect, label, modPolarity: mod.Polarity ?? null };
 }
 

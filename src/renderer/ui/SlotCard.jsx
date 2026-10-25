@@ -22,7 +22,7 @@ import { SLOT_POLARITIES } from '../../shared/capacity.js';
 import { arcaneControls, arcaneMaxRank, arcaneStacksText, arcaneSummary, arcaneSupport, arcanesFor } from '../../shared/arcanes.js';
 import { modConditionalControls, modConditionalSummary, modStacksOf, modStacksText } from '../../shared/conditional-mods.js';
 import { modRarityFrame } from '../../shared/card-assets.js';
-import { RIVEN_CAPACITY_MOD, RIVEN_MAX_RANK, canTakeRiven, isRiven, rivenLines, rivenShortName, rivenSlotBlockReason } from '../../shared/rivens.js';
+import { RIVEN_MAX_RANK, rivenCapacityMod, canTakeRiven, isRiven, rivenLines, rivenShortName, rivenSlotBlockReason } from '../../shared/rivens.js';
 import { ARCANE_MIME, MOD_MIME, dropInfo } from '../dnd.js';
 import { hasNoStats } from './common.jsx';
 import { ArtImage, OVERLAY, PolarityGlyph, RARITY_TOKEN, polarityName, useCards, useTextCards } from './art.jsx';
@@ -674,9 +674,10 @@ export function ModSlot({ slot, width, height, caption = null, tabbable = true }
     );
   }
 
-  // A riven is not in data.mods: a text card with its stat lines, Omni drain 10 + rank, ranks 0-8 (docs/port-rivens.md).
+  // A riven is not in data.mods: a text card with its stat lines, drain 10 + rank in its polarity (Omni when it has
+  // none), ranks 0-8 (docs/port-rivens.md).
   const riven = isRiven(value);
-  const mod = riven ? RIVEN_CAPACITY_MOD : ctx.index.byName.get(value.name);
+  const mod = riven ? rivenCapacityMod(value) : ctx.index.byName.get(value.name);
   const max = riven ? RIVEN_MAX_RANK : maxRank(mod);
   const lines = riven ? rivenLines(value) : null;
   const shownName = riven ? rivenShortName(value) : value.name;

@@ -14,6 +14,8 @@ const MAX_STATS = 4;
 const MAX_RANK = 8;
 const DEFAULT_DISPOSITION = 1.2;
 const UNITS = ['%', 'm', 's', ''];
+/** A riven's polarity in game (Madurai, Vazarin, Naramon); none set counts as Omni. */
+const POLARITIES = ['AP_ATTACK', 'AP_DEFENSE', 'AP_TACTIC'];
 
 const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const text = v => (typeof v === 'string' ? v.trim().slice(0, MAX_TEXT) : '');
@@ -28,9 +30,9 @@ function unitOf(name, unit) {
 }
 
 /**
- * A riven slot or library entry: { isRiven, id, name, family, disposition, rank, stats: [{ name, value, unit }] },
- * or null. Disposition is a number above 0 (else 1.2), rank a whole number 0-8 (else 8), at most 4 stats with a
- * name and a finite value; unknown keys are dropped.
+ * A riven slot or library entry: { isRiven, id, name, family, disposition, rank, polarity?, stats: [{ name, value, unit }] },
+ * or null. Disposition is a number above 0 (else 1.2), rank a whole number 0-8 (else 8), polarity one of the three
+ * (else left out), at most 4 stats with a name and a finite value; unknown keys are dropped.
  */
 export function cleanRiven(r) {
   if (!isObj(r) || r.isRiven !== true) return null;
@@ -49,6 +51,7 @@ export function cleanRiven(r) {
     family,
     disposition: Number.isFinite(d) && d > 0 ? d : DEFAULT_DISPOSITION,
     rank: Number.isInteger(rank) && rank >= 0 && rank <= MAX_RANK ? rank : MAX_RANK,
+    ...(POLARITIES.includes(r.polarity) ? { polarity: r.polarity } : {}),
     stats,
   };
 }

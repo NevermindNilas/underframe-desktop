@@ -1,11 +1,11 @@
 // The riven dialog's working copy (docs/port-rivens.md 11.5). Pure: no DOM, testable in node.
 //
-// A draft holds what the player types: the disposition as text, the rank, and stat rows of a sign (positive or
+// A draft holds what the player types: the disposition as text, the rank, the polarity ('' when not set: Omni), and stat rows of a sign (positive or
 // negative), a stat key and the value as the riven shows it in game ("222.7" for +222.7% Critical Chance, "1.51" for
 // ×1.51 Damage vs. Grineer, "-35.6" for a positive Recoil roll). Changing the disposition or rank keeps the typed
 // values and recomputes the stored rolls: the typed values are what the game shows.
 import {
-  MAX_NEGATIVE, MAX_POSITIVE, RIVEN_DEFAULT_DISPOSITION, RIVEN_MAX_RANK, displayNumber, displayUnit, effectiveValue, formatEffective,
+  MAX_NEGATIVE, MAX_POSITIVE, RIVEN_DEFAULT_DISPOSITION, RIVEN_MAX_RANK, displayNumber, rivenPolarity, displayUnit, effectiveValue, formatEffective,
   fromDisplayNumber, rivenStatCatalogue, rivenStatLabel, rivenStatUnit, statRange, toStored, validateRiven,
 } from '../shared/rivens.js';
 
@@ -26,13 +26,16 @@ export const emptyRow = (positive = true) => ({ key: rowKey(), positive, stat: '
 /** A draft for a riven being edited, or a new one (two empty positive rows, disposition 1.2, rank 8). */
 export function draftFrom(riven) {
   if (!riven) {
-    return { id: '', disposition: String(RIVEN_DEFAULT_DISPOSITION), rank: RIVEN_MAX_RANK, rows: [emptyRow(), emptyRow()], orig: null };
+    return { id: '', disposition: String(RIVEN_DEFAULT_DISPOSITION), rank: RIVEN_MAX_RANK, polarity: '', rows: [emptyRow(), emptyRow()], orig: null };
   }
   const rows = (riven.stats ?? []).map(s => {
     const text = numberText(displayNumber(s.name, s.unit, effectiveValue(s, riven)));
     return { key: rowKey(), positive: Number(s.value) >= 0, stat: s.name, text, orig: { stat: s.name, text, value: Number(s.value) } };
   });
-  return { id: riven.id ?? '', disposition: String(riven.disposition), rank: riven.rank, rows, orig: { disposition: String(riven.disposition), rank: riven.rank } };
+  return {
+    id: riven.id ?? '', disposition: String(riven.disposition), rank: riven.rank, polarity: rivenPolarity(riven) ?? '', rows,
+    orig: { disposition: String(riven.disposition), rank: riven.rank },
+  };
 }
 
 export const countRows = draft => ({
@@ -56,7 +59,11 @@ export function rivenFromDraft(draft, family) {
     if (unchanged && r.orig && r.orig.stat === r.stat && r.orig.text === r.text) return { name: r.stat, value: r.orig.value, unit };
     return { name: r.stat, value: toStored(fromDisplayNumber(r.stat, unit, parseTyped(r.text)), scale), unit };
   });
-  return { isRiven: true, id: draft.id, name: `${family} Riven Mod`, family, disposition: Number.isFinite(disposition) ? disposition : draft.disposition, rank: draft.rank, stats };
+  return {
+    isRiven: true, id: draft.id, name: `${family} Riven Mod`, family, disposition: Number.isFinite(disposition) ? disposition : draft.disposition, rank: draft.rank,
+    ...(draft.polarity ? { polarity: draft.polarity } : {}),
+    stats,
+  };
 }
 
 function signMessage(stat, positive) {

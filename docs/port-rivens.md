@@ -485,3 +485,12 @@ What the menu offers:
 - No riven art: rivens stay text cards.
 - Reading one riven from a screenshot of two cards takes the left one, and says so.
 - No real riven screenshots were available. The OCR tests use cards drawn for the test and read by Windows OCR, plus hand-made OCR for lost signs and misreads.
+
+### 13.6 Riven polarity (2026-10-25)
+
+In game a riven has a polarity (Madurai, Vazarin or Naramon); the site treats every riven as Omni.
+
+- A riven may carry `polarity` ('AP_ATTACK', 'AP_DEFENSE' or 'AP_TACTIC'). It is written only when set, so rivens from the site and older ones are unchanged and count as Omni.
+- The riven dialog has a Polarity field ("Not set (Omni)" first). A riven read from a screenshot starts without one: the symbol is an icon the text recognition can't read, and the note asks to check it.
+- Capacity (`rivenCapacityMod`), the drag preview, the slot card's plate, Auto build's Forma plan and Auto Forma use the riven's polarity; without one, Omni as before.
+- Kept by `normalizeRiven`, the main process's `cleanRiven` (saved builds, the library) and the library files; `sameRivenContent` compares it.

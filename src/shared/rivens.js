@@ -11,8 +11,22 @@ import { resolveFaction } from './factions.js';
 export const RIVEN_MAX_RANK = 8;
 export const RIVEN_DEFAULT_DISPOSITION = 1.2;
 export const RIVEN_BASE_DRAIN = 10;
-/** What capacity.js needs of a riven: drain 10 + rank, Omni polarity (halved in any polarised slot but Umbra). */
+/** What capacity.js needs of a riven whose polarity isn't set: drain 10 + rank, Omni (halved in any polarised slot but Umbra). */
 export const RIVEN_CAPACITY_MOD = Object.freeze({ 'Base Drain': RIVEN_BASE_DRAIN, Polarity: 'AP_ANY' });
+/** The polarities a riven can have in game: Madurai, Vazarin, Naramon. A riven without one counts as Omni, as on the site. */
+export const RIVEN_POLARITIES = Object.freeze(['AP_ATTACK', 'AP_DEFENSE', 'AP_TACTIC']);
+const RIVEN_POLARITY_NAMES = { madurai: 'AP_ATTACK', vazarin: 'AP_DEFENSE', naramon: 'AP_TACTIC' };
+const RIVEN_CAPACITY_MODS = Object.fromEntries(RIVEN_POLARITIES.map(p => [p, Object.freeze({ 'Base Drain': RIVEN_BASE_DRAIN, Polarity: p })]));
+
+/** A riven's polarity: 'AP_ATTACK', 'AP_DEFENSE', 'AP_TACTIC' (codes or names, any case), else null (Omni). */
+export function rivenPolarity(riven) {
+  const raw = String(riven?.polarity ?? '').trim();
+  const code = RIVEN_POLARITY_NAMES[raw.toLowerCase()] ?? raw.toUpperCase();
+  return RIVEN_POLARITIES.includes(code) ? code : null;
+}
+
+/** What capacity.js needs of a riven: drain 10 + rank, in its own polarity (Omni when not set). */
+export const rivenCapacityMod = riven => RIVEN_CAPACITY_MODS[rivenPolarity(riven)] ?? RIVEN_CAPACITY_MOD;
 export const MIN_POSITIVE = 2;
 export const MAX_POSITIVE = 3;
 export const MAX_NEGATIVE = 1;
@@ -256,6 +270,7 @@ export function normalizeRiven(raw) {
     .map(s => ({ name: s.name.slice(0, MAX_TEXT), value: Number(s.value), unit: rivenStatUnit(s.name, s.unit) }));
   const family = text(raw.family) || text(raw.name).replace(/ Riven Mod$/, '');
   if (!family) return null;
+  const polarity = rivenPolarity(raw);
   return {
     isRiven: true,
     id: text(raw.id),
@@ -263,6 +278,8 @@ export function normalizeRiven(raw) {
     family,
     disposition: rivenDisposition(raw),
     rank: rivenRank(raw),
+    // Only when set: a riven without one (the site's, or one made before polarities) counts as Omni.
+    ...(polarity ? { polarity } : {}),
     stats,
   };
 }
@@ -345,9 +362,9 @@ export function rivenSlotBlockReason(build, weapon, slot) {
 /** A new riven id, "riven_<ms>" as the site makes them (with a suffix so two in one millisecond differ). */
 export const newRivenId = (now = Date.now(), random = Math.random) => `riven_${now}_${Math.floor(random() * 1e6).toString(36)}`;
 
-/** Same riven content (stats, disposition and, unless `rank` is false, rank), ignoring the id. */
+/** Same riven content (stats, disposition, polarity and, unless `rank` is false, rank), ignoring the id. */
 export function sameRivenContent(a, b, { rank = true } = {}) {
-  const key = r => JSON.stringify([r?.family, rivenDisposition(r), rank ? rivenRank(r) : 0, (r?.stats ?? []).map(s => [s.name, Number(s.value)])]);
+  const key = r => JSON.stringify([r?.family, rivenDisposition(r), rank ? rivenRank(r) : 0, rivenPolarity(r), (r?.stats ?? []).map(s => [s.name, Number(s.value)])]);
   return key(a) === key(b);
 }
 

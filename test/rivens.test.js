@@ -224,6 +224,23 @@ test('capacity: drain 10 + rank, Omni (halved in any polarised slot but Umbra)',
   assert.equal(at(0, 'AP_TACTIC'), 5);
 });
 
+test('polarity: a riven with one drains as a mod of it; kept by every cleaner, junk dropped', () => {
+  const vaz = braton({ polarity: 'AP_DEFENSE' });
+  const at = (r, pol) => capacityUse([r], [pol], () => null).perSlot[0];
+  assert.equal(at(vaz, 'AP_DEFENSE').drain, 9);
+  assert.equal(at(vaz, 'AP_ATTACK').drain, 23);
+  assert.equal(at(vaz, null).drain, 18);
+  assert.equal(R.rivenPolarity({ polarity: 'naramon' }), 'AP_TACTIC');
+  assert.equal(R.rivenPolarity({ polarity: 'AP_UMBRA' }), null);
+  assert.equal(R.normalizeRiven(vaz).polarity, 'AP_DEFENSE');
+  assert.equal('polarity' in R.normalizeRiven(braton({ polarity: 'nope' })), false);
+  assert.equal(cleanRiven(vaz).polarity, 'AP_DEFENSE');
+  assert.equal('polarity' in cleanRiven(braton({ polarity: 'AP_UMBRA' })), false);
+  assert.equal(R.sameRivenContent(vaz, braton()), false);
+  const lib = R.parseRivenLibraryFile(R.rivenLibraryFileText({ version: 1, rivens: [{ ...vaz, id: 'riven_1' }] }));
+  assert.equal(lib.rivens[0].polarity, 'AP_DEFENSE');
+});
+
 // ---------- storage ----------
 
 test('saved builds: a riven slot round-trips; junk dropped, out-of-range rank becomes 8', async t => {
