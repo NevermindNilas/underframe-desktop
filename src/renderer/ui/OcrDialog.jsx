@@ -418,7 +418,8 @@ function WeaponChoice({ review }) {
         selectedOptions={supported ? [review.weaponName] : []}
         placeholder="Pick the weapon"
         onChange={e => setQuery(e.target.value)}
-        onOptionSelect={(_e, d) => { setQuery(null); if (d.optionValue) O.setWeapon(d.optionValue); }}
+        // Emptying the field makes Fluent clear the selection (no option): keep the empty search, don't reset it.
+        onOptionSelect={(_e, d) => { if (!d.optionValue) return; setQuery(null); O.setWeapon(d.optionValue); }}
         onOpenChange={(_e, d) => { if (!d.open) setQuery(null); }}
         positioning={{ autoSize: 'height' }}
       >

@@ -100,8 +100,10 @@ function EnemyField() {
         data-focus-id="target-enemy"
         onChange={e => setQuery(e.target.value)}
         onOptionSelect={(_e, d) => {
+          // Emptying the field makes Fluent clear the selection (no option): keep the empty search, don't reset it.
+          if (!d.optionValue) return;
           setQuery(null);
-          if (d.optionValue && d.optionValue !== preset) actions.setTarget({ preset: d.optionValue });
+          if (d.optionValue !== preset) actions.setTarget({ preset: d.optionValue });
         }}
         onOpenChange={(_e, d) => { if (!d.open) setQuery(null); }}
         positioning={{ autoSize: 'height' }}
