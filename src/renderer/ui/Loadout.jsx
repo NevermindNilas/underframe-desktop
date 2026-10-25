@@ -150,8 +150,10 @@ function WeaponPicker() {
         placeholder="Search weapons"
         onChange={e => setQuery(e.target.value)}
         onOptionSelect={(_e, d) => {
+          // Emptying the field makes Fluent clear the selection (no option): keep the empty search, don't reset it.
+          if (!d.optionValue) return;
           setQuery(null);
-          if (d.optionValue && d.optionValue !== weaponName) actions.setWeapon(d.optionValue);
+          if (d.optionValue !== weaponName) actions.setWeapon(d.optionValue);
         }}
         onOpenChange={(_e, d) => { if (!d.open) setQuery(null); }}
         onKeyDown={e => {

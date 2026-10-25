@@ -1040,6 +1040,37 @@ async function checkFeatured(app, errors, checks) {
  * a real click opens the popover with the default Magnetic 25%; picking Heat from the element dropdown with real clicks changes the bonus and
  * the DPS; Esc closes it. The weapon goes back to Braton Prime with its mods afterwards.
  */
+/**
+ * The weapon search with real keys: select the name, type a letter, Backspace it away. The field stays empty (Fluent
+ * clears the selection then, which once reset it to the weapon's name), typing again searches, and Escape puts the
+ * weapon's name back without changing the weapon.
+ */
+async function checkWeaponSearch(app, errors, checks) {
+  const { store, actions, uf } = app;
+  // The featured check leaves the library drawer open; it covers the Loadout.
+  actions.setLibraryOpen(false);
+  await waitFor(() => !$('.fui-OverlayDrawer'), 2000);
+  const input = $('#weapon-combobox');
+  const weapon = store.get().build?.weaponName;
+  if (!(await realClick(app, input, errors, 'weapon search'))) return;
+  await uf.smokePress('A', ['control']);
+  await uf.smokePress('z');
+  await waitFor(() => input.value === 'z', 1000);
+  await uf.smokePress('Backspace');
+  const emptied = await waitFor(() => input.value === '', 1000);
+  await sleep(300);
+  checks.weaponSearchEmptied = input.value;
+  if (!emptied || input.value !== '') errors.push(`weapon search: after deleting every letter the field reads "${input.value}", not empty`);
+  for (const k of 'zarr') await uf.smokePress(k);
+  const listed = await waitFor(() => input.value === 'zarr' && $$('[role="option"]').some(o => /Zarr/.test(o.textContent)), 2000);
+  if (!listed) errors.push(`weapon search: typing after emptying shows "${input.value}" and no Zarr in the list`);
+  await uf.smokePress('Escape');
+  await uf.smokePress('Escape');
+  await waitFor(() => input.value === weapon, 1000);
+  if (input.value !== weapon || store.get().build?.weaponName !== weapon) errors.push(`weapon search: Escape left "${input.value}" (weapon ${store.get().build?.weaponName}), expected ${weapon}`);
+  log(`weapon search: emptied to "${checks.weaponSearchEmptied}", Zarr listed: ${Boolean(listed)}`);
+}
+
 async function checkWeaponOptions(app, errors, checks) {
   const { store, actions, uf } = app;
   // Braton Prime's only options are its Incarnon evolutions (docs/port-incarnon.md), with no perk picked by default.
@@ -1331,6 +1362,7 @@ export async function runSmoke(app, { t0 }) {
     await checkSaveRemove(app, errors, checks);
     await checkOcr(app, errors, checks);
     await checkFeatured(app, errors, checks);
+    await checkWeaponSearch(app, errors, checks);
     await checkWeaponOptions(app, errors, checks);
     await checkRiven(app, errors, checks);
     await checkRivenTools(app, errors, checks);
