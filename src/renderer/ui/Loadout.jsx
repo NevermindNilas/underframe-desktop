@@ -46,16 +46,21 @@ const useStyles = makeStyles({
   spacer: { flexGrow: 1 },
   visuallyHidden: { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' },
   capacity: { display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM, minHeight: '28px', minWidth: 0 },
-  // On the weapon's line it is never narrower than its content (the meter's least width and the tools), so the line
-  // wraps instead of the tools spilling into the Readout.
-  capacityCompact: { flexGrow: 1, maxWidth: '640px', minWidth: 'max-content', marginLeft: 'auto' },
+  // On the weapon's line it takes the room left and is never narrower than its content (the meter's least width and
+  // the tools): when that doesn't fit, it wraps to a row of its own, full width, instead of spilling into the Readout.
+  capacityCompact: { flexGrow: 1, minWidth: 'max-content' },
+  // Pushes the tools to the right end of the line.
+  grow: { flexGrow: 1 },
   meterLabel: { color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap' },
   tools: { padding: 0, flexShrink: 0, gap: '2px' },
   track: {
     position: 'relative',
-    flexGrow: 1,
+    // Takes the free room first, up to its cap (the spacer before the tools gets what is left).
+    flexGrow: 100,
     height: '6px',
     minWidth: '80px',
+    // A bar long enough to read at a glance; the rest of the line is left free.
+    maxWidth: '320px',
     borderRadius: tokens.borderRadiusCircular,
     backgroundColor: tokens.colorNeutralStroke3,
     overflow: 'hidden',
@@ -286,6 +291,7 @@ export function CapacityMeter({ compact = false }) {
       {cap.over ? <Caption1 className={styles.over}><ErrorCircleRegular aria-hidden="true" /> {cap.over} over</Caption1> : null}
       {/* Capacity isn't doubled: say so where the number is (the menu toggles it). */}
       {!cap.over && !capacity.catalyst ? <Caption1 className={styles.meterLabel} data-testid="catalyst-off">No Catalyst</Caption1> : null}
+      <span className={styles.grow} />
       {/* Auto build's one quiet entry point (docs/declutter-spec.md 4), next to the build mechanics. The tools are one
           toolbar: one tab stop, arrow keys between them. */}
       <Toolbar aria-label="Build tools" size="small" className={styles.tools} data-testid="build-tools">
@@ -409,8 +415,7 @@ export function Loadout({ layout, width, height }) {
         <WeaponPicker />
         <FireMode />
         <WeaponOptions />
-        <span className={styles.spacer} />
-        {oneLine ? <CapacityMeter compact /> : null}
+        {oneLine ? <CapacityMeter compact /> : <span className={styles.spacer} />}
       </div>
       {oneLine ? null : <CapacityMeter />}
       <Slots size={size} picking={picking} />
